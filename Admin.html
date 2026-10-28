@@ -176,19 +176,26 @@
     const q = pane.querySelector('.search').value.trim().toLowerCase();
     const includeInactive = pane.querySelector('.show-inactive').checked;
 
-    callServer('entity_list', entity, { includeInactive: includeInactive })
+    callServer('entity_list', entity, {})
       .then(function (rows) {
         rows = Array.isArray(rows) ? rows : [];
         state.cache[entity] = rows;
-        const activeCount = rows.filter(function (r) {
-          return String(r['Active?'] || 'Yes').toLowerCase() !== 'no';
-        }).length;
-        setCount(entity.toLowerCase(), activeCount);
-        const filtered = q ? rows.filter(function (r) {
+
+        function isActive(r) {
+          const v = String(r['Active?'] == null ? '' : r['Active?']).trim().toLowerCase();
+          // Treat anything that isn't explicitly "no" / "false" / "0" as active.
+          return v !== 'no' && v !== 'false' && v !== '0';
+        }
+
+        const visible = includeInactive ? rows : rows.filter(isActive);
+        setCount(entity.toLowerCase(), rows.filter(isActive).length);
+
+        const filtered = q ? visible.filter(function (r) {
           return Object.keys(r).some(function (k) {
             return String(r[k] == null ? '' : r[k]).toLowerCase().indexOf(q) >= 0;
           });
-        }) : rows;
+        }) : visible;
+
         wrap.innerHTML = buildTable(entity, filtered);
         wrap.querySelectorAll('tr[data-id]').forEach(function (tr) {
           tr.addEventListener('click', function () {
@@ -197,7 +204,6 @@
         });
       })
       .catch(function (err) {
-        console.error('refreshList error for ' + entity + ':', err);
         wrap.innerHTML = '<div class="error">Error loading ' + escapeHtml(entity) + ': ' + escapeHtml(err.message) + '</div>';
       });
   }

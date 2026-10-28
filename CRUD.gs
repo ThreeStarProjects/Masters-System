@@ -13,22 +13,17 @@
 // -----------------------------------------------------------------------------
 
 /**
- * List rows of an entity, filtered. Reader-level (anyone with sheet access).
- * Returns an array of header-keyed objects, with Active?=No rows filtered
- * out unless includeInactive is true.
+ * List rows of an entity. Returns every row, always.
+ * The client decides what to show (active vs. inactive, search filter).
+ * Keeps server-side logic trivial so there's nothing to misdiagnose.
  */
 function entity_list(entityName, opts) {
   const schema = SCHEMA[entityName];
   if (!schema) throw new Error('Unknown entity: ' + entityName);
   const o = opts || {};
-  const rows = readAll_(entityName);
-  return rows
-    .filter(function (r) {
-      if (!o.includeInactive && String(r['Active?'] || '').toLowerCase() === 'no') return false;
-      if (o.filter) return matchesFilter_(r, o.filter);
-      return true;
-    })
-    .map(stripInternal_);
+  const rows = readAll_(entityName).map(stripInternal_);
+  if (o.filter) return rows.filter(function (r) { return matchesFilter_(r, o.filter); });
+  return rows;
 }
 
 /** Fetch one row by ID. */
