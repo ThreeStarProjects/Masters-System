@@ -14,37 +14,30 @@
 
 /**
  * List rows of an entity. Returns every row.
- * Returns a per-row _diag field so we can see server-side state inline.
+ * ponytail: Date and other non-primitive values are coerced to strings before
+ * returning — google.script.run silently drops rows whose values it can't
+ * serialise, so we flatten them here.
  */
 function entity_list(entityName, opts) {
-  if (!SCHEMA[entityName]) {
-    return [{ _diag: 'UNKNOWN_ENTITY', entityName: entityName, Site_ID: 'DIAG-A', Name: 'Entity ' + entityName + ' not in SCHEMA' }];
-  }
-  var ss = SpreadsheetApp.getActive();
-  if (!ss) {
-    return [{ _diag: 'NO_ACTIVE_SPREADSHEET', Site_ID: 'DIAG-B', Name: 'SpreadsheetApp.getActive() returned null' }];
-  }
-  var sh = ss.getSheetByName(entityName);
-  if (!sh) {
-    return [{ _diag: 'SHEET_MISSING', entityName: entityName, Site_ID: 'DIAG-C', Name: 'No sheet named ' + entityName }];
-  }
+  if (!SCHEMA[entityName]) throw new Error('Unknown entity: ' + entityName);
+  var sh = SpreadsheetApp.getActive().getSheetByName(entityName);
+  if (!sh) throw new Error('Sheet missing: ' + entityName);
   var last = sh.getLastRow();
   var cols = sh.getLastColumn();
-  if (last < 2) {
-    return [{ _diag: 'EMPTY_SHEET', Site_ID: 'DIAG-D', Name: 'Sheet is empty (lastRow=' + last + ')' }];
-  }
+  if (last < 2 || cols < 1) return [];
   var headers = sh.getRange(1, 1, 1, cols).getValues()[0];
   var values  = sh.getRange(2, 1, last - 1, cols).getValues();
   var out = [];
   for (var i = 0; i < values.length; i++) {
     var o = {};
     for (var j = 0; j < headers.length; j++) {
-      o[String(headers[j])] = values[i][j];
+      var v = values[i][j];
+      if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+      else if (v === undefined || v === null) v = '';
+      else if (typeof v === 'object') v = String(v);
+      o[String(headers[j])] = v;
     }
     out.push(o);
-  }
-  if (out.length === 0) {
-    return [{ _diag: 'LOOP_PRODUCED_ZERO', Site_ID: 'DIAG-E', Name: 'Loop ran but produced no rows. values.length=' + values.length }];
   }
   if (opts && opts.filter) {
     out = out.filter(function (r) { return matchesFilter_(r, opts.filter); });
