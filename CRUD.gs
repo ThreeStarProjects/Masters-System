@@ -13,17 +13,30 @@
 // -----------------------------------------------------------------------------
 
 /**
- * List rows of an entity. Returns every row, always.
- * The client decides what to show (active vs. inactive, search filter).
- * Keeps server-side logic trivial so there's nothing to misdiagnose.
+ * List rows of an entity. Returns every row, always. Pure vanilla ES5,
+ * no helper indirection — fewer places for a silent empty-return.
  */
 function entity_list(entityName, opts) {
-  const schema = SCHEMA[entityName];
-  if (!schema) throw new Error('Unknown entity: ' + entityName);
-  const o = opts || {};
-  const rows = readAll_(entityName).map(stripInternal_);
-  if (o.filter) return rows.filter(function (r) { return matchesFilter_(r, o.filter); });
-  return rows;
+  if (!SCHEMA[entityName]) throw new Error('Unknown entity: ' + entityName);
+  var sh = SpreadsheetApp.getActive().getSheetByName(entityName);
+  if (!sh) throw new Error('Sheet missing: ' + entityName);
+  var last = sh.getLastRow();
+  var cols = sh.getLastColumn();
+  if (last < 2 || cols < 1) return [];
+  var headers = sh.getRange(1, 1, 1, cols).getValues()[0];
+  var values  = sh.getRange(2, 1, last - 1, cols).getValues();
+  var out = [];
+  for (var i = 0; i < values.length; i++) {
+    var o = {};
+    for (var j = 0; j < headers.length; j++) {
+      o[String(headers[j])] = values[i][j];
+    }
+    out.push(o);
+  }
+  if (opts && opts.filter) {
+    return out.filter(function (r) { return matchesFilter_(r, opts.filter); });
+  }
+  return out;
 }
 
 /** Fetch one row by ID. */
