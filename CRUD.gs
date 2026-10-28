@@ -13,16 +13,26 @@
 // -----------------------------------------------------------------------------
 
 /**
- * List rows of an entity. Returns every row, always. Pure vanilla ES5,
- * no helper indirection — fewer places for a silent empty-return.
+ * List rows of an entity. Returns every row.
+ * Returns a per-row _diag field so we can see server-side state inline.
  */
 function entity_list(entityName, opts) {
-  if (!SCHEMA[entityName]) throw new Error('Unknown entity: ' + entityName);
-  var sh = SpreadsheetApp.getActive().getSheetByName(entityName);
-  if (!sh) throw new Error('Sheet missing: ' + entityName);
+  if (!SCHEMA[entityName]) {
+    return [{ _diag: 'UNKNOWN_ENTITY', entityName: entityName, Site_ID: 'DIAG-A', Name: 'Entity ' + entityName + ' not in SCHEMA' }];
+  }
+  var ss = SpreadsheetApp.getActive();
+  if (!ss) {
+    return [{ _diag: 'NO_ACTIVE_SPREADSHEET', Site_ID: 'DIAG-B', Name: 'SpreadsheetApp.getActive() returned null' }];
+  }
+  var sh = ss.getSheetByName(entityName);
+  if (!sh) {
+    return [{ _diag: 'SHEET_MISSING', entityName: entityName, Site_ID: 'DIAG-C', Name: 'No sheet named ' + entityName }];
+  }
   var last = sh.getLastRow();
   var cols = sh.getLastColumn();
-  if (last < 2 || cols < 1) return [];
+  if (last < 2) {
+    return [{ _diag: 'EMPTY_SHEET', Site_ID: 'DIAG-D', Name: 'Sheet is empty (lastRow=' + last + ')' }];
+  }
   var headers = sh.getRange(1, 1, 1, cols).getValues()[0];
   var values  = sh.getRange(2, 1, last - 1, cols).getValues();
   var out = [];
@@ -33,8 +43,11 @@ function entity_list(entityName, opts) {
     }
     out.push(o);
   }
+  if (out.length === 0) {
+    return [{ _diag: 'LOOP_PRODUCED_ZERO', Site_ID: 'DIAG-E', Name: 'Loop ran but produced no rows. values.length=' + values.length }];
+  }
   if (opts && opts.filter) {
-    return out.filter(function (r) { return matchesFilter_(r, opts.filter); });
+    out = out.filter(function (r) { return matchesFilter_(r, opts.filter); });
   }
   return out;
 }

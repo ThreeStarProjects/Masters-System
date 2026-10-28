@@ -182,8 +182,8 @@
         state.cache[entity] = rows;
 
         function isActive(r) {
+          if (r._diag) return true;    // always show diagnostic rows
           const v = String(r['Active?'] == null ? '' : r['Active?']).trim().toLowerCase();
-          // Treat anything that isn't explicitly "no" / "false" / "0" as active.
           return v !== 'no' && v !== 'false' && v !== '0';
         }
 
