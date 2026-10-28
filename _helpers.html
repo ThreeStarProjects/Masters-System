@@ -1,26 +1,236 @@
 <script>
-  /**
-   * Masters-System · client helpers
-   * Thin wrappers for google.script.run with toast + error UX.
-   * Expand in v0.2 when CRUD arrives.
-   */
-  function callServer(name, payload) {
-    return new Promise(function (resolve, reject) {
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(err => reject(new Error(err && err.message || String(err))))
-        [name](payload);
+/**
+ * Masters-System · client helpers
+ * Shared: server call wrapper, toast, modal, form renderer.
+ */
+
+// ─── server call wrapper ─────────────────────────────────────────────────────
+function callServer(name /*, args */) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve, reject) {
+    const runner = google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (err) { reject(new Error(err && err.message || String(err))); });
+    runner[name].apply(runner, args);
+  });
+}
+
+// ─── toast ───────────────────────────────────────────────────────────────────
+function toast(msg, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + (kind || 'ok');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(function () { el.classList.add('toast-show'); }, 10);
+  setTimeout(function () {
+    el.classList.remove('toast-show');
+    setTimeout(function () { el.remove(); }, 300);
+  }, kind === 'bad' ? 4000 : 2200);
+}
+
+// ─── modal ───────────────────────────────────────────────────────────────────
+function openModal(title, bodyEl, actions) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  header.innerHTML = '<h2>' + escapeHtml(title) + '</h2><button class="modal-close" aria-label="Close">&times;</button>';
+
+  const body = document.createElement('div');
+  body.className = 'modal-body';
+  body.appendChild(bodyEl);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal-footer';
+  (actions || []).forEach(function (a) {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    b.className = 'btn ' + (a.kind || '');
+    b.addEventListener('click', function () { a.onClick && a.onClick(close); });
+    footer.appendChild(b);
+  });
+
+  modal.appendChild(header);
+  modal.appendChild(body);
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  function close() { backdrop.remove(); }
+  header.querySelector('.modal-close').addEventListener('click', close);
+  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+  document.addEventListener('keydown', escClose);
+  function escClose(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escClose); } }
+
+  return { close: close, body: body };
+}
+
+// ─── form renderer ───────────────────────────────────────────────────────────
+/**
+ * Build a form from entity_formMeta. `values` is the current row (or empty for New).
+ * Returns { el, read() → object }.
+ */
+function buildForm(meta, values) {
+  const vals = values || {};
+  const form = document.createElement('form');
+  form.className = 'form';
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
+
+  const inputs = {};
+
+  meta.fields.forEach(function (f) {
+    const row = document.createElement('div');
+    row.className = 'form-row' + (f.type === 'textarea' ? ' form-row-wide' : '');
+
+    const label = document.createElement('label');
+    label.textContent = f.name + (f.required ? ' *' : '');
+    label.className = 'form-label';
+    row.appendChild(label);
+
+    const input = buildField(f, vals[f.name]);
+    input.classList.add('form-input');
+    inputs[f.name] = input;
+    row.appendChild(input);
+
+    if (f.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'form-hint';
+      hint.textContent = f.hint;
+      row.appendChild(hint);
+    }
+
+    form.appendChild(row);
+  });
+
+  function read() {
+    const out = {};
+    meta.fields.forEach(function (f) {
+      if (f.readonly) return;
+      const el = inputs[f.name];
+      if (!el) return;
+      let v = el.value;
+      if (f.type === 'yesno' || f.type === 'enum') {
+        out[f.name] = v;
+      } else if (f.type === 'number') {
+        out[f.name] = v === '' ? '' : Number(v);
+      } else {
+        out[f.name] = v;
+      }
     });
+    return out;
   }
 
-  function toast(msg, kind) {
-    const el = document.createElement('div');
-    el.textContent = msg;
-    el.style.cssText =
-      'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);' +
-      'padding:10px 16px;background:' + (kind === 'bad' ? '#dc2626' : '#1f3a5f') + ';' +
-      'color:#fff;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);';
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 2500);
+  return { el: form, read: read };
+}
+
+function buildField(f, currentValue) {
+  const v = (currentValue == null) ? (f.default == null ? '' : f.default) : currentValue;
+
+  if (f.type === 'textarea') {
+    const t = document.createElement('textarea');
+    t.rows = 3;
+    t.value = normalizeValue(v);
+    if (f.readonly) t.setAttribute('readonly', 'readonly');
+    return t;
   }
+  if (f.type === 'yesno') {
+    return buildSelect(['Yes', 'No'], v || 'No', f.readonly);
+  }
+  if (f.type === 'enum') {
+    return buildSelect(f.values || [], v || (f.values && f.values[0]) || '', f.readonly);
+  }
+  if (f.type === 'lookup') {
+    const opts = ((f.lookup && f.lookup.options) || []).map(function (o) { return { value: o.id, label: o.label }; });
+    opts.unshift({ value: '', label: '— none —' });
+    return buildSelectRich(opts, v || '', f.readonly);
+  }
+  if (f.type === 'date') {
+    const i = document.createElement('input');
+    i.type = 'date';
+    i.value = toDateInputValue(v);
+    if (f.readonly) i.setAttribute('readonly', 'readonly');
+    return i;
+  }
+  if (f.type === 'number') {
+    const i = document.createElement('input');
+    i.type = 'number';
+    i.step = 'any';
+    i.value = v === '' || v == null ? '' : v;
+    if (f.readonly) i.setAttribute('readonly', 'readonly');
+    return i;
+  }
+  // text / id / audit → text input
+  const i = document.createElement('input');
+  i.type = 'text';
+  i.value = normalizeValue(v);
+  if (f.readonly) {
+    i.setAttribute('readonly', 'readonly');
+    i.classList.add('readonly');
+  }
+  return i;
+}
+
+function buildSelect(values, selected, readonly) {
+  const s = document.createElement('select');
+  values.forEach(function (val) {
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = val;
+    if (val === selected) o.selected = true;
+    s.appendChild(o);
+  });
+  if (readonly) s.setAttribute('disabled', 'disabled');
+  return s;
+}
+
+function buildSelectRich(options, selected, readonly) {
+  const s = document.createElement('select');
+  options.forEach(function (opt) {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    if (opt.value === selected) o.selected = true;
+    s.appendChild(o);
+  });
+  if (readonly) s.setAttribute('disabled', 'disabled');
+  return s;
+}
+
+// ─── small utils ─────────────────────────────────────────────────────────────
+function normalizeValue(v) {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
+}
+
+function toDateInputValue(v) {
+  if (!v) return '';
+  // v can be ISO string, Date, or a serialised value from server. Date-only.
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatCell(v) {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v);
+  if (s.length > 60) return s.slice(0, 57) + '…';
+  return s;
+}
 </script>

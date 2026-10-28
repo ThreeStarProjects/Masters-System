@@ -36,10 +36,9 @@
     <h1>Welcome to Masters</h1>
     <p class="lead">
       Central registers for Projects, Customers, Parties, Employees and Sites.
-      Edits here propagate to Finance, IMS and Project-Management the next time
-      each system refreshes its cache (default: 5&nbsp;minutes).
+      Edits propagate to Finance, IMS and Project-Management the next time
+      each system refreshes its cache.
     </p>
-
     <div class="cards">
       <div class="card"><div class="n" id="s-projects">·</div><div class="l">Projects</div></div>
       <div class="card"><div class="n" id="s-customers">·</div><div class="l">Customers</div></div>
@@ -47,21 +46,14 @@
       <div class="card"><div class="n" id="s-employees">·</div><div class="l">Employees</div></div>
       <div class="card"><div class="n" id="s-sites">·</div><div class="l">Sites</div></div>
     </div>
-
-    <div class="scaffold-notice">
-      <strong>v0.1 — scaffold.</strong>
-      This is the empty shell. Entity tabs show placeholder content until
-      per-entity CRUD lands in v0.2.
-      Setup, permissions and the public library API are already working.
-    </div>
   </section>
 
-  <!-- Entity panes (placeholder in v0.1) -->
-  <section id="pane-projects"  class="pane"><h1>Projects</h1>  <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
-  <section id="pane-customers" class="pane"><h1>Customers</h1> <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
-  <section id="pane-parties"   class="pane"><h1>Parties</h1>   <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
-  <section id="pane-employees" class="pane"><h1>Employees</h1> <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
-  <section id="pane-sites"     class="pane"><h1>Sites</h1>     <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+  <!-- Entity panes — hydrated on tab click -->
+  <section id="pane-projects"  class="pane entity-pane" data-entity="Projects"></section>
+  <section id="pane-customers" class="pane entity-pane" data-entity="Customers"></section>
+  <section id="pane-parties"   class="pane entity-pane" data-entity="Parties"></section>
+  <section id="pane-employees" class="pane entity-pane" data-entity="Employees"></section>
+  <section id="pane-sites"     class="pane entity-pane" data-entity="Sites"></section>
 
 </main>
 
@@ -76,13 +68,17 @@
 <?!= include('_helpers'); ?>
 
 <script>
-  // Boot
-  google.script.run
-    .withSuccessHandler(onBootstrap)
-    .withFailureHandler(onError)
-    .ui_getBootstrap();
+  // ─── state ─────────────────────────────────────────────────────────────────
+  const state = {
+    user: null,
+    cache: {}        // { Projects: [...], Customers: [...], ... }
+  };
+
+  // ─── boot ──────────────────────────────────────────────────────────────────
+  callServer('ui_getBootstrap').then(onBootstrap).catch(onBootError);
 
   function onBootstrap(b) {
+    state.user = b.user;
     document.getElementById('ver').textContent = 'v' + b.version;
     document.getElementById('footerVer').textContent = b.version;
     document.getElementById('userEmail').textContent = b.user.email || '(unknown)';
@@ -91,36 +87,169 @@
     roleEl.textContent = role;
     roleEl.classList.add('role-' + role.toLowerCase());
 
-    ['projects','customers','parties','employees','sites'].forEach(k => {
+    ['projects','customers','parties','employees','sites'].forEach(function (k) {
       const n = (b.entities[k] && b.entities[k].count) || 0;
-      document.getElementById('c-' + k).textContent = n;
-      document.getElementById('s-' + k).textContent = n;
+      setCount(k, n);
     });
+
+    // Honour ?page=
+    const p = <?= JSON.stringify(initialPage) ?>;
+    if (p && p !== 'home') switchTab(p);
   }
 
-  function onError(err) {
+  function onBootError(err) {
     document.getElementById('userEmail').textContent = 'Error: ' + err.message;
   }
 
-  // Tab switching
-  document.querySelectorAll('.tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const t = btn.dataset.tab;
-      document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === btn));
-      document.querySelectorAll('.pane').forEach(p => {
-        p.classList.toggle('active', p.id === 'pane-' + t);
-      });
-    });
+  function setCount(key, n) {
+    document.getElementById('c-' + key).textContent = n;
+    const s = document.getElementById('s-' + key);
+    if (s) s.textContent = n;
+  }
+
+  // ─── tabs ──────────────────────────────────────────────────────────────────
+  document.querySelectorAll('.tab').forEach(function (btn) {
+    btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
   });
 
-  // Honour initial page from template
-  (function () {
-    const p = <?= JSON.stringify(initialPage) ?>;
-    if (p && p !== 'home') {
-      const btn = document.querySelector('.tab[data-tab="' + p + '"]');
-      if (btn) btn.click();
-    }
-  })();
+  function switchTab(t) {
+    document.querySelectorAll('.tab').forEach(function (x) {
+      x.classList.toggle('active', x.dataset.tab === t);
+    });
+    document.querySelectorAll('.pane').forEach(function (p) {
+      p.classList.toggle('active', p.id === 'pane-' + t);
+    });
+    if (t === 'home') return;
+    renderEntityPane(t);
+  }
+
+  // ─── entity pane rendering ────────────────────────────────────────────────
+  function renderEntityPane(tabKey) {
+    const pane = document.getElementById('pane-' + tabKey);
+    const entity = pane.dataset.entity;
+    pane.innerHTML =
+      '<div class="pane-head">' +
+        '<h1>' + entity + '</h1>' +
+        '<div class="pane-tools">' +
+          '<input class="search" placeholder="Filter…" />' +
+          '<label class="chk"><input type="checkbox" class="show-inactive"> Show inactive</label>' +
+          (state.user && state.user.isEditor ? '<button class="btn primary new-btn">+ New ' + entityVerb(entity) + '</button>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="list-wrap"><div class="loading">Loading…</div></div>';
+
+    pane.querySelector('.search').addEventListener('input', function () { refreshList(pane, entity); });
+    pane.querySelector('.show-inactive').addEventListener('change', function () { refreshList(pane, entity); });
+    const newBtn = pane.querySelector('.new-btn');
+    if (newBtn) newBtn.addEventListener('click', function () { openEditModal(entity, null); });
+
+    refreshList(pane, entity);
+  }
+
+  function entityVerb(e) {
+    return { 'Projects':'Project','Customers':'Customer','Parties':'Party','Employees':'Employee','Sites':'Site' }[e] || e;
+  }
+
+  function refreshList(pane, entity) {
+    const wrap = pane.querySelector('.list-wrap');
+    const q = pane.querySelector('.search').value.trim().toLowerCase();
+    const includeInactive = pane.querySelector('.show-inactive').checked;
+
+    callServer('entity_list', entity, { includeInactive: includeInactive })
+      .then(function (rows) {
+        state.cache[entity] = rows;
+        setCount(entity.toLowerCase(), rows.filter(function (r) {
+          return String(r['Active?'] || 'Yes').toLowerCase() !== 'no';
+        }).length);
+        const filtered = q ? rows.filter(function (r) {
+          return Object.keys(r).some(function (k) {
+            return String(r[k] == null ? '' : r[k]).toLowerCase().indexOf(q) >= 0;
+          });
+        }) : rows;
+        wrap.innerHTML = buildTable(entity, filtered);
+        wrap.querySelectorAll('tr[data-id]').forEach(function (tr) {
+          tr.addEventListener('click', function () {
+            openEditModal(entity, tr.dataset.id);
+          });
+        });
+      })
+      .catch(function (err) {
+        wrap.innerHTML = '<div class="error">Error: ' + escapeHtml(err.message) + '</div>';
+      });
+  }
+
+  function buildTable(entity, rows) {
+    if (!rows.length) return '<div class="empty">No rows yet. ' + (state.user && state.user.isEditor ? 'Click + New to add one.' : '') + '</div>';
+    // Pick visible columns: id, label, and up to 5 non-audit non-label fields
+    const first = rows[0];
+    const keys = Object.keys(first);
+    const idCol = keys[0];                     // first column is always the ID
+    const visible = keys.filter(function (k) {
+      if (k === idCol) return true;
+      if (['Created_At','Created_By','Updated_At','Updated_By','Notes'].indexOf(k) >= 0) return false;
+      return true;
+    }).slice(0, 8);
+
+    let html = '<table class="grid"><thead><tr>';
+    visible.forEach(function (k) { html += '<th>' + escapeHtml(k) + '</th>'; });
+    html += '</tr></thead><tbody>';
+    rows.forEach(function (r) {
+      const inactive = String(r['Active?'] || 'Yes').toLowerCase() === 'no';
+      html += '<tr data-id="' + escapeHtml(r[idCol]) + '" class="' + (inactive ? 'row-inactive' : '') + '">';
+      visible.forEach(function (k) { html += '<td>' + escapeHtml(formatCell(r[k])) + '</td>'; });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  // ─── create/edit modal ────────────────────────────────────────────────────
+  function openEditModal(entity, id) {
+    const isNew = !id;
+    Promise.all([
+      callServer('entity_formMeta', entity),
+      isNew ? Promise.resolve({}) : callServer('entity_get', entity, id)
+    ]).then(function (results) {
+      const meta = results[0];
+      const row = results[1] || {};
+      const form = buildForm(meta, row);
+      const canWrite = state.user && state.user.isEditor;
+      const actions = [];
+      if (canWrite) {
+        actions.push({ label: 'Save', kind: 'primary', onClick: function (close) {
+          const data = form.read();
+          if (!isNew) data[meta.idCol] = id;
+          saveEntity(entity, data).then(function () { close(); refreshCurrentPane(); });
+        }});
+        if (!isNew) {
+          actions.push({ label: 'Soft-delete', kind: 'danger', onClick: function (close) {
+            if (!confirm('Mark ' + id + ' as inactive?')) return;
+            callServer('entity_softDelete', entity, id).then(function () {
+              toast('Marked inactive: ' + id);
+              close(); refreshCurrentPane();
+            }).catch(function (err) { toast(err.message, 'bad'); });
+          }});
+        }
+      }
+      actions.push({ label: 'Cancel', onClick: function (close) { close(); } });
+
+      openModal((isNew ? 'New ' : 'Edit ') + entityVerb(entity) + (isNew ? '' : ' · ' + id), form.el, actions);
+    }).catch(function (err) { toast(err.message, 'bad'); });
+  }
+
+  function saveEntity(entity, data) {
+    return callServer('entity_save', entity, data)
+      .then(function (saved) {
+        toast('Saved: ' + (saved[Object.keys(saved)[0]] || ''));
+        return saved;
+      })
+      .catch(function (err) { toast(err.message, 'bad'); throw err; });
+  }
+
+  function refreshCurrentPane() {
+    const active = document.querySelector('.pane.active.entity-pane');
+    if (active) refreshList(active, active.dataset.entity);
+  }
 </script>
 
 </body>
