@@ -43,13 +43,13 @@ const SH = {
 // -----------------------------------------------------------------------------
 const SCHEMA = {
 
-  [SH.CONFIG]: {
+  'Config': {
     headers: ['Key', 'Value', 'Description'],
     freezeCols: 1,
     protect: 'admin'            // only admins can edit
   },
 
-  [SH.PROJECTS]: {
+  'Projects': {
     headers: [
       'Project_ID', 'Name', 'Short_Code',
       'Customer_ID', 'Site_ID',
@@ -68,7 +68,7 @@ const SCHEMA = {
     protect: 'editor'
   },
 
-  [SH.CUSTOMERS]: {
+  'Customers': {
     headers: [
       'Customer_ID', 'Name', 'Legal_Name',
       'GSTIN', 'PAN',
@@ -86,7 +86,7 @@ const SCHEMA = {
     protect: 'editor'
   },
 
-  [SH.PARTIES]: {
+  'Parties': {
     headers: [
       'Party_ID', 'Name', 'Legal_Name',
       'GSTIN', 'PAN',
@@ -105,7 +105,7 @@ const SCHEMA = {
     protect: 'editor'
   },
 
-  [SH.EMPLOYEES]: {
+  'Employees': {
     headers: [
       'Emp_ID', 'Name', 'Role',
       'Site_ID',
@@ -125,7 +125,7 @@ const SCHEMA = {
     protect: 'editor'
   },
 
-  [SH.SITES]: {
+  'Sites': {
     headers: [
       'Site_ID', 'Name', 'Type',
       'Address',
@@ -142,7 +142,7 @@ const SCHEMA = {
     protect: 'editor'
   },
 
-  [SH.AUDIT]: {
+  'Audit_Log': {
     headers: [
       'Timestamp', 'User_Email', 'Entity_Type', 'Entity_ID',
       'Action', 'Field', 'Old_Value', 'New_Value', 'Note'
