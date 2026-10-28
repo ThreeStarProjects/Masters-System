@@ -74,31 +74,47 @@
     cache: {}        // { Projects: [...], Customers: [...], ... }
   };
 
+  // tabKey → entity name (removes dependency on data-entity attributes).
+  const ENTITY_FOR_TAB = {
+    'projects':  'Projects',
+    'customers': 'Customers',
+    'parties':   'Parties',
+    'employees': 'Employees',
+    'sites':     'Sites'
+  };
+
   // ─── boot ──────────────────────────────────────────────────────────────────
   callServer('ui_getBootstrap').then(onBootstrap).catch(onBootError);
 
   function onBootstrap(b) {
-    state.user = b.user;
-    document.getElementById('ver').textContent = 'v' + b.version;
-    document.getElementById('footerVer').textContent = b.version;
-    document.getElementById('userEmail').textContent = b.user.email || '(unknown)';
-    const role = b.user.isAdmin ? 'Admin' : (b.user.isEditor ? 'Editor' : 'Viewer');
-    const roleEl = document.getElementById('userRole');
-    roleEl.textContent = role;
-    roleEl.classList.add('role-' + role.toLowerCase());
+    try {
+      state.user = (b && b.user) || { email: '', isAdmin: false, isEditor: false };
+      const version = (b && b.version) || '?';
+      document.getElementById('ver').textContent = 'v' + version;
+      document.getElementById('footerVer').textContent = version;
+      document.getElementById('userEmail').textContent = state.user.email || '(unknown)';
+      const role = state.user.isAdmin ? 'Admin' : (state.user.isEditor ? 'Editor' : 'Viewer');
+      const roleEl = document.getElementById('userRole');
+      roleEl.textContent = role;
+      roleEl.classList.add('role-' + role.toLowerCase());
 
-    ['projects','customers','parties','employees','sites'].forEach(function (k) {
-      const n = (b.entities[k] && b.entities[k].count) || 0;
-      setCount(k, n);
-    });
+      const entities = (b && b.entities) || {};
+      ['projects','customers','parties','employees','sites'].forEach(function (k) {
+        const n = (entities[k] && entities[k].count) || 0;
+        setCount(k, n);
+      });
 
-    // Honour ?page=
-    const p = <?= JSON.stringify(initialPage) ?>;
-    if (p && p !== 'home') switchTab(p);
+      const p = <?= JSON.stringify(initialPage) ?>;
+      if (p && p !== 'home') switchTab(p);
+    } catch (e) {
+      console.error('onBootstrap error:', e);
+      document.getElementById('userEmail').textContent = 'Boot error: ' + e.message;
+    }
   }
 
   function onBootError(err) {
-    document.getElementById('userEmail').textContent = 'Error: ' + err.message;
+    console.error('callServer boot error:', err);
+    document.getElementById('userEmail').textContent = 'Error: ' + (err && err.message || 'unknown');
   }
 
   function setCount(key, n) {
@@ -109,12 +125,15 @@
 
   // ─── tabs ──────────────────────────────────────────────────────────────────
   document.querySelectorAll('.tab').forEach(function (btn) {
-    btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+    btn.addEventListener('click', function () {
+      const tab = btn.getAttribute('data-tab') || '';
+      switchTab(tab);
+    });
   });
 
   function switchTab(t) {
     document.querySelectorAll('.tab').forEach(function (x) {
-      x.classList.toggle('active', x.dataset.tab === t);
+      x.classList.toggle('active', (x.getAttribute('data-tab') || '') === t);
     });
     document.querySelectorAll('.pane').forEach(function (p) {
       p.classList.toggle('active', p.id === 'pane-' + t);
@@ -126,7 +145,9 @@
   // ─── entity pane rendering ────────────────────────────────────────────────
   function renderEntityPane(tabKey) {
     const pane = document.getElementById('pane-' + tabKey);
-    const entity = pane.dataset.entity;
+    if (!pane) { console.error('No pane element for tab:', tabKey); return; }
+    const entity = ENTITY_FOR_TAB[tabKey];
+    if (!entity) { pane.innerHTML = '<div class="error">Unknown tab: ' + escapeHtml(tabKey) + '</div>'; return; }
     pane.innerHTML =
       '<div class="pane-head">' +
         '<h1>' + entity + '</h1>' +
@@ -157,10 +178,12 @@
 
     callServer('entity_list', entity, { includeInactive: includeInactive })
       .then(function (rows) {
+        rows = Array.isArray(rows) ? rows : [];
         state.cache[entity] = rows;
-        setCount(entity.toLowerCase(), rows.filter(function (r) {
+        const activeCount = rows.filter(function (r) {
           return String(r['Active?'] || 'Yes').toLowerCase() !== 'no';
-        }).length);
+        }).length;
+        setCount(entity.toLowerCase(), activeCount);
         const filtered = q ? rows.filter(function (r) {
           return Object.keys(r).some(function (k) {
             return String(r[k] == null ? '' : r[k]).toLowerCase().indexOf(q) >= 0;
@@ -169,12 +192,13 @@
         wrap.innerHTML = buildTable(entity, filtered);
         wrap.querySelectorAll('tr[data-id]').forEach(function (tr) {
           tr.addEventListener('click', function () {
-            openEditModal(entity, tr.dataset.id);
+            openEditModal(entity, tr.getAttribute('data-id') || '');
           });
         });
       })
       .catch(function (err) {
-        wrap.innerHTML = '<div class="error">Error: ' + escapeHtml(err.message) + '</div>';
+        console.error('refreshList error for ' + entity + ':', err);
+        wrap.innerHTML = '<div class="error">Error loading ' + escapeHtml(entity) + ': ' + escapeHtml(err.message) + '</div>';
       });
   }
 
@@ -248,7 +272,10 @@
 
   function refreshCurrentPane() {
     const active = document.querySelector('.pane.active.entity-pane');
-    if (active) refreshList(active, active.dataset.entity);
+    if (!active) return;
+    const key = (active.id || '').replace('pane-', '');
+    const entity = ENTITY_FOR_TAB[key];
+    if (entity) refreshList(active, entity);
   }
 </script>
 
