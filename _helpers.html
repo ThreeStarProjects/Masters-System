@@ -1,0 +1,26 @@
+<script>
+  /**
+   * Masters-System · client helpers
+   * Thin wrappers for google.script.run with toast + error UX.
+   * Expand in v0.2 when CRUD arrives.
+   */
+  function callServer(name, payload) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(err => reject(new Error(err && err.message || String(err))))
+        [name](payload);
+    });
+  }
+
+  function toast(msg, kind) {
+    const el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText =
+      'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);' +
+      'padding:10px 16px;background:' + (kind === 'bad' ? '#dc2626' : '#1f3a5f') + ';' +
+      'color:#fff;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
+  }
+</script>

@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>3SP · Masters</title>
+  <?!= include('_styles'); ?>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⚙</span>
+    <span class="title">3 Star Projects · Masters</span>
+    <span class="ver" id="ver">v?</span>
+  </div>
+  <div class="user">
+    <span id="userEmail">loading…</span>
+    <span id="userRole" class="role"></span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="home"      class="tab active">Home</button>
+  <button data-tab="projects"  class="tab">Projects <span class="count" id="c-projects">·</span></button>
+  <button data-tab="customers" class="tab">Customers <span class="count" id="c-customers">·</span></button>
+  <button data-tab="parties"   class="tab">Parties <span class="count" id="c-parties">·</span></button>
+  <button data-tab="employees" class="tab">Employees <span class="count" id="c-employees">·</span></button>
+  <button data-tab="sites"     class="tab">Sites <span class="count" id="c-sites">·</span></button>
+</nav>
+
+<main>
+
+  <!-- Home -->
+  <section id="pane-home" class="pane active">
+    <h1>Welcome to Masters</h1>
+    <p class="lead">
+      Central registers for Projects, Customers, Parties, Employees and Sites.
+      Edits here propagate to Finance, IMS and Project-Management the next time
+      each system refreshes its cache (default: 5&nbsp;minutes).
+    </p>
+
+    <div class="cards">
+      <div class="card"><div class="n" id="s-projects">·</div><div class="l">Projects</div></div>
+      <div class="card"><div class="n" id="s-customers">·</div><div class="l">Customers</div></div>
+      <div class="card"><div class="n" id="s-parties">·</div><div class="l">Parties</div></div>
+      <div class="card"><div class="n" id="s-employees">·</div><div class="l">Employees</div></div>
+      <div class="card"><div class="n" id="s-sites">·</div><div class="l">Sites</div></div>
+    </div>
+
+    <div class="scaffold-notice">
+      <strong>v0.1 — scaffold.</strong>
+      This is the empty shell. Entity tabs show placeholder content until
+      per-entity CRUD lands in v0.2.
+      Setup, permissions and the public library API are already working.
+    </div>
+  </section>
+
+  <!-- Entity panes (placeholder in v0.1) -->
+  <section id="pane-projects"  class="pane"><h1>Projects</h1>  <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+  <section id="pane-customers" class="pane"><h1>Customers</h1> <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+  <section id="pane-parties"   class="pane"><h1>Parties</h1>   <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+  <section id="pane-employees" class="pane"><h1>Employees</h1> <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+  <section id="pane-sites"     class="pane"><h1>Sites</h1>     <p class="placeholder">Full CRUD arrives in v0.2.</p></section>
+
+</main>
+
+<footer>
+  <small>
+    Masters v<span id="footerVer">?</span> ·
+    Admin: <a href="mailto:modular@3starprojects.com">modular@3starprojects.com</a> ·
+    <a href="https://github.com/ThreeStarProjects/Masters-System" target="_blank">GitHub</a>
+  </small>
+</footer>
+
+<?!= include('_helpers'); ?>
+
+<script>
+  // Boot
+  google.script.run
+    .withSuccessHandler(onBootstrap)
+    .withFailureHandler(onError)
+    .ui_getBootstrap();
+
+  function onBootstrap(b) {
+    document.getElementById('ver').textContent = 'v' + b.version;
+    document.getElementById('footerVer').textContent = b.version;
+    document.getElementById('userEmail').textContent = b.user.email || '(unknown)';
+    const role = b.user.isAdmin ? 'Admin' : (b.user.isEditor ? 'Editor' : 'Viewer');
+    const roleEl = document.getElementById('userRole');
+    roleEl.textContent = role;
+    roleEl.classList.add('role-' + role.toLowerCase());
+
+    ['projects','customers','parties','employees','sites'].forEach(k => {
+      const n = (b.entities[k] && b.entities[k].count) || 0;
+      document.getElementById('c-' + k).textContent = n;
+      document.getElementById('s-' + k).textContent = n;
+    });
+  }
+
+  function onError(err) {
+    document.getElementById('userEmail').textContent = 'Error: ' + err.message;
+  }
+
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.tab;
+      document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === btn));
+      document.querySelectorAll('.pane').forEach(p => {
+        p.classList.toggle('active', p.id === 'pane-' + t);
+      });
+    });
+  });
+
+  // Honour initial page from template
+  (function () {
+    const p = <?= JSON.stringify(initialPage) ?>;
+    if (p && p !== 'home') {
+      const btn = document.querySelector('.tab[data-tab="' + p + '"]');
+      if (btn) btn.click();
+    }
+  })();
+</script>
+
+</body>
+</html>
