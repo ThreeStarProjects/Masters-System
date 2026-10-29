@@ -83,6 +83,19 @@
     'sites':     'Sites'
   };
 
+  // Columns shown in each entity's list view. Keep tight so the table stays
+  // compact and Name is always visible. Full record is in the edit modal.
+  const PANE_COLS = {
+    Projects:  ['Project_ID', 'Name', 'Status', 'Customer_ID', 'Site_ID', 'Active?'],
+    Customers: ['Customer_ID', 'Name', 'GSTIN', 'Phone', 'Email', 'Active?'],
+    Parties:   ['Party_ID', 'Name', 'Phone', 'Is_Supplier?', 'Is_JobWorker?', 'Is_Transporter?', 'Active?'],
+    Employees: ['Emp_ID', 'Name', 'Role', 'Phone', 'Status'],
+    Sites:     ['Site_ID', 'Name', 'Type', 'Address', 'Active?']
+  };
+
+  // Cached form metadata per entity — fetched once per tab, reused on every open.
+  const formMetaCache = {};
+
   // ─── boot ──────────────────────────────────────────────────────────────────
   callServer('ui_getBootstrap').then(onBootstrap).catch(onBootError);
 
@@ -171,15 +184,30 @@
     return { 'Projects':'Project','Customers':'Customer','Parties':'Party','Employees':'Employee','Sites':'Site' }[e] || e;
   }
 
-  function refreshList(pane, entity) {
+  function refreshList(pane, entity, opts) {
     const wrap = pane.querySelector('.list-wrap');
     const q = pane.querySelector('.search').value.trim().toLowerCase();
     const includeInactive = pane.querySelector('.show-inactive').checked;
+    const force = !!(opts && opts.force);
+
+    // Use cache if we already fetched this entity, unless caller forced refresh
+    // (post-save / post-delete) — avoids a round trip on tab switch.
+    if (!force && state.cache[entity]) {
+      renderRows(state.cache[entity]);
+      return;
+    }
 
     callServer('entity_list', entity, {})
       .then(function (rows) {
         rows = Array.isArray(rows) ? rows : [];
         state.cache[entity] = rows;
+        renderRows(rows);
+      })
+      .catch(function (err) {
+        wrap.innerHTML = '<div class="error">Error loading ' + escapeHtml(entity) + ': ' + escapeHtml(err.message) + '</div>';
+      });
+
+    function renderRows(rows) {
 
         function isActive(r) {
           if (r._diag) return true;    // always show diagnostic rows
@@ -190,35 +218,34 @@
         const visible = includeInactive ? rows : rows.filter(isActive);
         setCount(entity.toLowerCase(), rows.filter(isActive).length);
 
-        const filtered = q ? visible.filter(function (r) {
-          return Object.keys(r).some(function (k) {
-            return String(r[k] == null ? '' : r[k]).toLowerCase().indexOf(q) >= 0;
-          });
-        }) : visible;
-
-        wrap.innerHTML = buildTable(entity, filtered);
-        wrap.querySelectorAll('tr[data-id]').forEach(function (tr) {
-          tr.addEventListener('click', function () {
-            openEditModal(entity, tr.getAttribute('data-id') || '');
-          });
+      const filtered = q ? visible.filter(function (r) {
+        return Object.keys(r).some(function (k) {
+          return String(r[k] == null ? '' : r[k]).toLowerCase().indexOf(q) >= 0;
         });
-      })
-      .catch(function (err) {
-        wrap.innerHTML = '<div class="error">Error loading ' + escapeHtml(entity) + ': ' + escapeHtml(err.message) + '</div>';
+      }) : visible;
+
+      wrap.innerHTML = buildTable(entity, filtered);
+      wrap.querySelectorAll('tr[data-id]').forEach(function (tr) {
+        tr.addEventListener('click', function () {
+          openEditModal(entity, tr.getAttribute('data-id') || '');
+        });
       });
+    }
   }
 
   function buildTable(entity, rows) {
     if (!rows.length) return '<div class="empty">No rows yet. ' + (state.user && state.user.isEditor ? 'Click + New to add one.' : '') + '</div>';
-    // Pick visible columns: id, label, and up to 5 non-audit non-label fields
     const first = rows[0];
     const keys = Object.keys(first);
     const idCol = keys[0];                     // first column is always the ID
-    const visible = keys.filter(function (k) {
+    // Prefer the curated per-entity list — ensures Name is always visible.
+    // Fall back to a sensible default for anything not in PANE_COLS.
+    const defaults = keys.filter(function (k) {
       if (k === idCol) return true;
       if (['Created_At','Created_By','Updated_At','Updated_By','Notes'].indexOf(k) >= 0) return false;
       return true;
-    }).slice(0, 8);
+    }).slice(0, 6);
+    const visible = (PANE_COLS[entity] || defaults).filter(function (k) { return keys.indexOf(k) >= 0; });
 
     let html = '<table class="grid"><thead><tr>';
     visible.forEach(function (k) { html += '<th>' + escapeHtml(k) + '</th>'; });
@@ -236,8 +263,11 @@
   // ─── create/edit modal ────────────────────────────────────────────────────
   function openEditModal(entity, id) {
     const isNew = !id;
+    const metaP = formMetaCache[entity]
+      ? Promise.resolve(formMetaCache[entity])
+      : callServer('entity_formMeta', entity).then(function (m) { formMetaCache[entity] = m; return m; });
     Promise.all([
-      callServer('entity_formMeta', entity),
+      metaP,
       isNew ? Promise.resolve({}) : callServer('entity_get', entity, id)
     ]).then(function (results) {
       const meta = results[0];
@@ -249,13 +279,17 @@
         actions.push({ label: 'Save', kind: 'primary', onClick: function (close) {
           const data = form.read();
           if (!isNew) data[meta.idCol] = id;
-          saveEntity(entity, data).then(function () { close(); refreshCurrentPane(); });
+          saveEntity(entity, data).then(function () {
+            delete state.cache[entity];     // invalidate so refresh re-fetches
+            close(); refreshCurrentPane();
+          });
         }});
         if (!isNew) {
           actions.push({ label: 'Soft-delete', kind: 'danger', onClick: function (close) {
             if (!confirm('Mark ' + id + ' as inactive?')) return;
             callServer('entity_softDelete', entity, id).then(function () {
               toast('Marked inactive: ' + id);
+              delete state.cache[entity];
               close(); refreshCurrentPane();
             }).catch(function (err) { toast(err.message, 'bad'); });
           }});
@@ -281,7 +315,7 @@
     if (!active) return;
     const key = (active.id || '').replace('pane-', '');
     const entity = ENTITY_FOR_TAB[key];
-    if (entity) refreshList(active, entity);
+    if (entity) refreshList(active, entity, { force: true });
   }
 </script>
 

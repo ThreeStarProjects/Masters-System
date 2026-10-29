@@ -573,6 +573,84 @@ function menu_reconcilePullAll_() {
 }
 
 // -----------------------------------------------------------------------------
+// Link customers to projects — same convention Finance uses: each project's
+// customer is derived from the invoices tagged with it. Run AFTER importing
+// Projects + Customers. Non-destructive: only fills Customer_ID where blank.
+// -----------------------------------------------------------------------------
+function reconcile_linkCustomersToProjects() {
+  requireAdmin_();
+  const fin = _openSrcSS_('finance_sheet_id', 'Finance');
+  const invSh = fin.getSheetByName('Invoices');
+  if (!invSh) throw new Error('Finance.Invoices sheet not found');
+  const last = invSh.getLastRow();
+  if (last < 2) {
+    SpreadsheetApp.getUi().alert('No invoices in Finance to link from.');
+    return;
+  }
+  const cols = invSh.getLastColumn();
+  const headers = invSh.getRange(1, 1, 1, cols).getValues()[0];
+  const idxCustName = headers.indexOf('Customer_Name');
+  const idxProject  = headers.indexOf('Project');
+  if (idxCustName < 0 || idxProject < 0) {
+    throw new Error('Invoices sheet missing Customer_Name or Project column');
+  }
+  const vals = invSh.getRange(2, 1, last - 1, cols).getValues();
+
+  // project_normalized → { customer_normalized: count }
+  const tally = {};
+  vals.forEach(function (r) {
+    const proj = normName(r[idxProject]);
+    const cust = normName(r[idxCustName]);
+    if (!proj || !cust) return;
+    tally[proj] = tally[proj] || {};
+    tally[proj][cust] = (tally[proj][cust] || 0) + 1;
+  });
+
+  // Load Masters projects + customers
+  const projects = entity_list('Projects');
+  const customers = entity_list('Customers');
+
+  // Build normalized → Customer_ID index.
+  const custIndex = {};
+  customers.forEach(function (c) {
+    const key = normName(c.Name);
+    if (key && !custIndex[key]) custIndex[key] = c.Customer_ID;
+  });
+
+  let linked = 0, skippedNoInvoice = 0, skippedAlreadyLinked = 0, skippedCustMissing = 0;
+  const missingList = [];
+
+  projects.forEach(function (p) {
+    if (String(p.Customer_ID || '').trim()) { skippedAlreadyLinked++; return; }
+    const projKey = normName(p.Name);
+    const custs = tally[projKey];
+    if (!custs) { skippedNoInvoice++; return; }
+    // Pick the most-tagged customer for this project
+    let bestKey = null, bestCount = 0;
+    Object.keys(custs).forEach(function (k) {
+      if (custs[k] > bestCount) { bestKey = k; bestCount = custs[k]; }
+    });
+    if (!bestKey) { skippedNoInvoice++; return; }
+    const custId = custIndex[bestKey];
+    if (!custId) {
+      skippedCustMissing++;
+      if (missingList.length < 10) missingList.push(p.Name + ' → ' + bestKey);
+      return;
+    }
+    entity_save('Projects', Object.assign({}, p, { Customer_ID: custId }));
+    linked++;
+  });
+
+  const msg = 'Project→Customer link complete:\n' +
+    '  linked: ' + linked + '\n' +
+    '  already linked (skipped): ' + skippedAlreadyLinked + '\n' +
+    '  no invoice for project (skipped): ' + skippedNoInvoice + '\n' +
+    '  customer not in Masters (skipped): ' + skippedCustMissing +
+    (missingList.length ? '\n\n  missing examples:\n    ' + missingList.join('\n    ') : '');
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+// -----------------------------------------------------------------------------
 // Reset — wipe Projects/Customers/Parties/Employees + Rec_* + reset counters.
 // Keeps Sites (seeded), Config, Audit_Log headers.
 // -----------------------------------------------------------------------------

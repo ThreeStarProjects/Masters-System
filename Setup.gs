@@ -131,11 +131,10 @@ function seedSitesIfEmpty_() {
 }
 
 function applyAllValidations_() {
-  // Projects: Status, Customer_ID lookup, Site_ID lookup, Owner_Emp_ID lookup, Active?
+  // Projects: Status, Customer_ID lookup, Site_ID lookup, Active?
   applyEnumValidation_(SH.PROJECTS, 'Status', SCHEMA[SH.PROJECTS].statusValues);
   applyLookupValidation_(SH.PROJECTS, 'Customer_ID',  SH.CUSTOMERS, 'Customer_ID');
   applyLookupValidation_(SH.PROJECTS, 'Site_ID',      SH.SITES,     'Site_ID');
-  applyLookupValidation_(SH.PROJECTS, 'Owner_Emp_ID', SH.EMPLOYEES, 'Emp_ID');
   applyYesNoValidation_(SH.PROJECTS, 'Active?');
 
   // Customers: Active?
@@ -228,7 +227,15 @@ function applyAllFormatting_() {
   Object.keys(SCHEMA).forEach(sheetName => {
     const sh = ss_().getSheetByName(sheetName);
     if (!sh) return;
-    sh.autoResizeColumns(1, Math.min(SCHEMA[sheetName].headers.length, sh.getMaxColumns()));
+    const nCols = Math.min(SCHEMA[sheetName].headers.length, sh.getMaxColumns());
+    // Autosize first, then cap wide columns + enable wrap so text doesn't
+    // overflow visually. 300px is a reasonable readable max for long names.
+    sh.autoResizeColumns(1, nCols);
+    for (let c = 1; c <= nCols; c++) {
+      if (sh.getColumnWidth(c) > 300) sh.setColumnWidth(c, 300);
+    }
+    const lastRow = Math.max(sh.getLastRow(), 1);
+    sh.getRange(1, 1, lastRow, nCols).setWrap(true).setVerticalAlignment('top');
   });
 }
 

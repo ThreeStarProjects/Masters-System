@@ -61,7 +61,7 @@ const SCHEMA = {
       'Project_ID', 'Name', 'Short_Code',
       'Customer_ID', 'Site_ID',
       'Start_Date', 'Target_Handover',
-      'Status', 'Owner_Emp_ID',
+      'Status',
       'Notes',
       'Active?',
       'Created_At', 'Created_By', 'Updated_At', 'Updated_By'
@@ -83,7 +83,6 @@ const SCHEMA = {
       'Start_Date':      { type: 'date' },
       'Target_Handover': { type: 'date' },
       'Status':          { type: 'enum',     values: ['Enquiry','Confirmed','In Progress','Delivered','Handover','On Hold','Cancelled'], default: 'Enquiry' },
-      'Owner_Emp_ID':    { type: 'lookup',   from: 'Employees' },
       'Notes':           { type: 'textarea' },
       'Active?':         { type: 'yesno',    default: 'Yes' }
     }
