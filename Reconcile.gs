@@ -255,20 +255,20 @@ function _importFromRec_(entity) {
   const idx = {};
   headers.forEach(function (h, i) { idx[h] = i; });
 
-  let created = 0, skipped = 0, errors = [];
+  let created = 0, skippedStatus = 0, skippedAlready = 0, errors = [];
   for (let i = 0; i < vals.length; i++) {
     const row = vals[i];
     const status = String(row[idx['Status']] || '').trim().toLowerCase();
-    if (status !== 'approved') { skipped++; continue; }
+    if (status !== 'approved') { skippedStatus++; continue; }
+    // Idempotency: if Target_Master_ID is already filled, this row was imported.
+    const existingId = String(row[idx['Target_Master_ID']] || '').trim();
+    if (existingId) { skippedAlready++; continue; }
     let payload = {};
-    try {
-      payload = JSON.parse(row[idx['Payload']] || '{}');
-    } catch (_) {}
+    try { payload = JSON.parse(row[idx['Payload']] || '{}'); } catch (_) {}
     const sourceName = String(row[idx['Source_Name']] || '').trim();
     const data = _buildMasterPayload_(entity, sourceName, payload);
     try {
       const saved = entity_save(entity, data);
-      // Write back the new ID into Target_Master_ID column
       sh.getRange(i + 2, idx['Target_Master_ID'] + 1).setValue(saved[SCHEMA[entity].idCol]);
       created++;
     } catch (e) {
@@ -278,7 +278,8 @@ function _importFromRec_(entity) {
 
   const msg = 'Imported into ' + entity + ':\n' +
     '  created: ' + created + '\n' +
-    '  skipped: ' + skipped +
+    '  already-imported (skipped): ' + skippedAlready + '\n' +
+    '  not approved (skipped): ' + skippedStatus +
     (errors.length ? '\n  errors (' + errors.length + '):\n    ' + errors.slice(0, 10).join('\n    ') : '');
   SpreadsheetApp.getUi().alert(msg);
 }
@@ -290,9 +291,14 @@ function _importFromRec_(entity) {
  */
 function _buildMasterPayload_(entity, sourceName, payload) {
   if (entity === 'Projects') {
+    // Finance.Active=No usually means the project is finished (or cancelled —
+    // user can refine in Masters). Default completed ones to Delivered,
+    // active ones to Enquiry.
+    const active = String(payload['Active'] || payload['Active?'] || 'Yes').toLowerCase() !== 'no';
     return {
       Name: sourceName,
-      'Active?': String(payload['Active'] || payload['Active?'] || 'Yes').toLowerCase() === 'no' ? 'No' : 'Yes'
+      Status: active ? 'Enquiry' : 'Delivered',
+      'Active?': active ? 'Yes' : 'No'
     };
   }
   if (entity === 'Customers') {
@@ -404,6 +410,35 @@ const _REC_SOURCE_PRIORITY = {
   'IMS':           4
 };
 
+/** Key used to match a row across pulls so we preserve Status + Target_Master_ID. */
+function _recRowKey_(source, sourceId, normalized) {
+  return source + '|' + (sourceId || normalized);
+}
+
+/** Read Status + Target_Master_ID from a Rec_* sheet, keyed by _recRowKey_. */
+function _readPriorRecState_(ss, sheetName) {
+  const out = {};
+  const sh = ss.getSheetByName(sheetName);
+  if (!sh) return out;
+  const last = sh.getLastRow();
+  if (last < 2) return out;
+  const headers = sh.getRange(1, 1, 1, REC_HEADERS.length).getValues()[0];
+  const idx = {};
+  headers.forEach(function (h, i) { idx[h] = i; });
+  const vals = sh.getRange(2, 1, last - 1, REC_HEADERS.length).getValues();
+  vals.forEach(function (r) {
+    const source = String(r[idx['Source']] || '').trim();
+    const sourceId = String(r[idx['Source_ID']] || '').trim();
+    const normalized = String(r[idx['Normalized']] || '').trim();
+    if (!source) return;
+    out[_recRowKey_(source, sourceId, normalized)] = {
+      status:   String(r[idx['Status']] || '').trim().toLowerCase(),
+      targetId: String(r[idx['Target_Master_ID']] || '').trim()
+    };
+  });
+  return out;
+}
+
 /** True if `a` is a better dedup rep than `b`: longer name wins, tie → source. */
 function _recRowBetter_(a, b) {
   if (a.normalized.length !== b.normalized.length) {
@@ -416,6 +451,10 @@ function _recRowBetter_(a, b) {
 
 function _writeRecSheet_(sheetName, rows) {
   const ss = ss_();
+  // Preserve prior Status + Target_Master_ID across re-pulls — keyed by
+  // Source|Source_ID when both present, else Source|Normalized.
+  const prior = _readPriorRecState_(ss, sheetName);
+
   let sh = ss.getSheetByName(sheetName);
   if (sh) ss.deleteSheet(sh);
   sh = ss.insertSheet(sheetName);
@@ -464,9 +503,11 @@ function _writeRecSheet_(sheetName, rows) {
 
   if (rows.length) {
     const data = rows.map(function (r) {
+      const key = _recRowKey_(r.source, r.sourceId, r.normalized);
+      const kept = prior[key];
       return [
-        r.defaultStatus,
-        '',                                  // Target_Master_ID
+        kept ? kept.status : r.defaultStatus,
+        kept ? kept.targetId : '',
         r.source,
         r.sourceId || '',
         r.sourceName,
@@ -504,4 +545,50 @@ function menu_reconcilePullAll_() {
   reconcile_pullCustomers();
   reconcile_pullParties();
   reconcile_pullEmployees();
+}
+
+// -----------------------------------------------------------------------------
+// Reset — wipe Projects/Customers/Parties/Employees + Rec_* + reset counters.
+// Keeps Sites (seeded), Config, Audit_Log headers.
+// -----------------------------------------------------------------------------
+function reconcile_resetMigration() {
+  requireAdmin_();
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.alert(
+    'Reset migration data?',
+    'This will DELETE all rows from:\n' +
+    '  • Projects / Customers / Parties / Employees\n' +
+    '  • Rec_Projects / Rec_Customers / Rec_Parties / Rec_Employees\n' +
+    '  • Audit_Log\n\n' +
+    'And reset ID counters (next_prj / next_cust / next_vend / next_emp) to 1.\n\n' +
+    'Sites and Config are kept.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+
+  const ss = ss_();
+  const entitySheets = ['Projects', 'Customers', 'Parties', 'Employees'];
+  const recSheets    = ['Rec_Projects', 'Rec_Customers', 'Rec_Parties', 'Rec_Employees'];
+  const extras       = ['Audit_Log'];
+
+  function clearData(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last >= 2) sh.getRange(2, 1, last - 1, sh.getLastColumn()).clearContent();
+  }
+  entitySheets.forEach(clearData);
+  extras.forEach(clearData);
+  recSheets.forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    if (sh) ss.deleteSheet(sh);
+  });
+
+  // Reset counters
+  ['next_prj', 'next_cust', 'next_vend', 'next_emp'].forEach(function (k) {
+    setConfigValue_internal_(k, '1');
+  });
+
+  ui.alert('Reset complete. Pull again for a fresh migration.');
 }
