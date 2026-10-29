@@ -410,6 +410,27 @@ const _REC_SOURCE_PRIORITY = {
   'IMS':           4
 };
 
+/**
+ * Clean-case a human name as seen in source systems. Rules:
+ *   - underscores → spaces, collapse whitespace
+ *   - each word's first char uppercased
+ *   - long all-caps words (>4 chars) title-cased (FASTECH → Fastech)
+ *   - short all-caps left alone (BKC, L&T, G35, AC)
+ * Idempotent on already-clean strings.
+ */
+function _cleanName_(s) {
+  if (!s) return '';
+  const spaced = String(s).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  return spaced.split(' ').map(function (w) {
+    if (!w) return w;
+    const isAllUpper = w === w.toUpperCase();
+    if (isAllUpper && w.length > 4) {
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    }
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(' ');
+}
+
 /** Key used to match a row across pulls so we preserve Status + Target_Master_ID. */
 function _recRowKey_(source, sourceId, normalized) {
   return source + '|' + (sourceId || normalized);
@@ -466,8 +487,12 @@ function _writeRecSheet_(sheetName, rows) {
     .setFontColor('#FFFFFF');
   sh.setFrozenRows(1);
 
-  // Normalize + sort
-  rows.forEach(function (r) { r.normalized = normName(r.sourceName); });
+  // Clean-case source names (BKC_project → BKC Project), then normalize + sort.
+  // User can still hand-edit Source_Name in the sheet before approving.
+  rows.forEach(function (r) {
+    r.sourceName = _cleanName_(r.sourceName);
+    r.normalized = normName(r.sourceName);
+  });
   rows.sort(function (a, b) {
     if (a.normalized !== b.normalized) return a.normalized < b.normalized ? -1 : 1;
     const pa = _REC_SOURCE_PRIORITY[a.source] || 99;
