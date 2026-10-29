@@ -138,6 +138,7 @@ function normName(s) {
   if (!s) return '';
   return String(s)
     .toLowerCase()
+    .replace(/_/g, ' ')
     .replace(LEGAL_SUFFIX_RE, ' ')
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
