@@ -596,17 +596,24 @@ function reconcile_linkCustomersToProjects() {
   const vals = invSh.getRange(2, 1, last - 1, cols).getValues();
 
   // project_normalized → { customer_normalized: count }
+  // Finance invoices prefix project names with "MMYY NN" (e.g. "0826 02 Tata Power"),
+  // while M_Project uses plain names ("Chembur_Tata Power"). We store BOTH the
+  // raw and prefix-stripped keys so lookups work either way.
   const tally = {};
   let invRowsWithBoth = 0;
   const seenProjSample = {};
   vals.forEach(function (r) {
-    const proj = normName(r[idxProject]);
+    const projRaw = normName(r[idxProject]);
     const cust = normName(r[idxCustName]);
-    if (!proj || !cust) return;
+    if (!projRaw || !cust) return;
     invRowsWithBoth++;
-    tally[proj] = tally[proj] || {};
-    tally[proj][cust] = (tally[proj][cust] || 0) + 1;
-    if (Object.keys(seenProjSample).length < 5) seenProjSample[proj] = true;
+    const projStripped = projRaw.replace(/^(?:\d+\s+)+/, '').trim();
+    const keys = (projStripped && projStripped !== projRaw) ? [projRaw, projStripped] : [projRaw];
+    keys.forEach(function (k) {
+      tally[k] = tally[k] || {};
+      tally[k][cust] = (tally[k][cust] || 0) + 1;
+    });
+    if (Object.keys(seenProjSample).length < 5) seenProjSample[projRaw] = true;
   });
   Logger.log('Invoices rows total=' + (last - 1) + ', with both project+customer=' + invRowsWithBoth);
   Logger.log('Distinct projects in invoices=' + Object.keys(tally).length);
@@ -629,7 +636,23 @@ function reconcile_linkCustomersToProjects() {
   projects.forEach(function (p) {
     if (String(p.Customer_ID || '').trim()) { skippedAlreadyLinked++; return; }
     const projKey = normName(p.Name);
-    const custs = tally[projKey];
+
+    // 1. exact tally hit
+    let custs = tally[projKey];
+
+    // 2. substring match either direction (shorter string ≥6 chars) —
+    //    handles "Chembur_Tata Power" ↔ "0826 02 Tata Power" cross-naming.
+    if (!custs) {
+      let bestCusts = null, bestOverlap = 0;
+      Object.keys(tally).forEach(function (invKey) {
+        let overlap = 0;
+        if (projKey.length >= 6 && invKey.indexOf(projKey) >= 0) overlap = projKey.length;
+        else if (invKey.length >= 6 && projKey.indexOf(invKey) >= 0) overlap = invKey.length;
+        if (overlap > bestOverlap) { bestCusts = tally[invKey]; bestOverlap = overlap; }
+      });
+      custs = bestCusts;
+    }
+
     if (!custs) { skippedNoInvoice++; return; }
     // Pick the most-tagged customer for this project
     let bestKey = null, bestCount = 0;
