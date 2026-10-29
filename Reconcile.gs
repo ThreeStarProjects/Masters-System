@@ -591,20 +591,26 @@ function reconcile_linkCustomersToProjects() {
   const headers = invSh.getRange(1, 1, 1, cols).getValues()[0];
   const idxCustName = headers.indexOf('Customer_Name');
   const idxProject  = headers.indexOf('Project');
-  if (idxCustName < 0 || idxProject < 0) {
-    throw new Error('Invoices sheet missing Customer_Name or Project column');
-  }
+  if (idxCustName < 0) throw new Error('Invoices sheet missing Customer_Name column. Headers: ' + headers.join(' | '));
+  if (idxProject  < 0) throw new Error('Invoices sheet missing Project column. Headers: ' + headers.join(' | '));
   const vals = invSh.getRange(2, 1, last - 1, cols).getValues();
 
   // project_normalized → { customer_normalized: count }
   const tally = {};
+  let invRowsWithBoth = 0;
+  const seenProjSample = {};
   vals.forEach(function (r) {
     const proj = normName(r[idxProject]);
     const cust = normName(r[idxCustName]);
     if (!proj || !cust) return;
+    invRowsWithBoth++;
     tally[proj] = tally[proj] || {};
     tally[proj][cust] = (tally[proj][cust] || 0) + 1;
+    if (Object.keys(seenProjSample).length < 5) seenProjSample[proj] = true;
   });
+  Logger.log('Invoices rows total=' + (last - 1) + ', with both project+customer=' + invRowsWithBoth);
+  Logger.log('Distinct projects in invoices=' + Object.keys(tally).length);
+  Logger.log('Sample invoice project keys: ' + Object.keys(seenProjSample).join(' | '));
 
   // Load Masters projects + customers
   const projects = entity_list('Projects');
@@ -641,12 +647,22 @@ function reconcile_linkCustomersToProjects() {
     linked++;
   });
 
+  // Diagnostic: show a sample of Masters project keys so we can see why they
+  // don't match invoice project keys.
+  const sampleMastersKeys = projects.slice(0, 5).map(function (p) { return normName(p.Name); });
+  Logger.log('Sample Masters project keys: ' + sampleMastersKeys.join(' | '));
+
   const msg = 'Project→Customer link complete:\n' +
     '  linked: ' + linked + '\n' +
     '  already linked (skipped): ' + skippedAlreadyLinked + '\n' +
     '  no invoice for project (skipped): ' + skippedNoInvoice + '\n' +
-    '  customer not in Masters (skipped): ' + skippedCustMissing +
-    (missingList.length ? '\n\n  missing examples:\n    ' + missingList.join('\n    ') : '');
+    '  customer not in Masters (skipped): ' + skippedCustMissing + '\n\n' +
+    'Diagnostic:\n' +
+    '  invoice rows w/ project+customer: ' + invRowsWithBoth + '\n' +
+    '  distinct projects in invoices: ' + Object.keys(tally).length + '\n' +
+    '  sample invoice project keys: ' + Object.keys(seenProjSample).join(' | ') + '\n' +
+    '  sample Masters project keys:  ' + sampleMastersKeys.join(' | ') +
+    (missingList.length ? '\n\n  missing-customer examples:\n    ' + missingList.join('\n    ') : '');
   SpreadsheetApp.getUi().alert(msg);
 }
 
