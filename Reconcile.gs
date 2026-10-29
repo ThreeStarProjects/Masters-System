@@ -426,17 +426,22 @@ function _writeRecSheet_(sheetName, rows) {
     return pa - pb;
   });
 
-  // One `pending` per normalized-name group, siblings default to `skipped`.
-  // Blank normalized names are each on their own (no auto-dedup).
-  const seen = {};
+  // One `pending` per name group. Uses normMatch so prefix dupes are caught too:
+  //   "ASHA PLASTIC" ≡ "ASHA PLASTIC PRODUCT"
+  //   "ACCUTEC"      ≡ "ACCUTEC TOOLING SYSTEM"
+  // normMatch requires both strings ≥6 chars for prefix merge, so short names
+  // like "ASIAN" don't accidentally eat "ASIAN EXIM S".
+  // After the lex sort above, group members sit adjacent — one walk is enough.
+  let groupRep = null;
   rows.forEach(function (r) {
-    if (!r.normalized) { r.defaultStatus = 'pending'; return; }
-    if (seen[r.normalized]) {
+    if (!r.normalized) { r.defaultStatus = 'pending'; groupRep = null; return; }
+    if (groupRep && normMatch(groupRep.normalized, r.normalized)) {
       r.defaultStatus = 'skipped';
-      r.notes = (r.notes ? r.notes + ' · ' : '') + 'auto-skipped as dup of ' + seen[r.normalized];
+      r.notes = (r.notes ? r.notes + ' · ' : '') + 'auto-skipped as dup of ' +
+        groupRep.source + (groupRep.sourceId ? ':' + groupRep.sourceId : '');
     } else {
       r.defaultStatus = 'pending';
-      seen[r.normalized] = r.source + (r.sourceId ? ':' + r.sourceId : '');
+      groupRep = r;
     }
   });
 
