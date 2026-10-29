@@ -62,13 +62,13 @@ function reconcile_pullProjects() {
     });
   });
 
-  // PM.Projects — Project_ID (PRJ-###) | Project_Name.
-  // Soft: PM is often empty at this stage; skip quietly if missing.
+  // PM.Projects — headers are 'Project ID' and 'Project Name' (spaces,
+  // not underscores). Soft: skip quietly if sheet missing or empty.
   try {
     const pm = _openSrcSS_('pm_sheet_id', 'PM');
     _readSheet_(pm, 'Projects').forEach(function (r) {
-      const id = String(r['Project_ID'] || '').trim();
-      const name = String(r['Project_Name'] || '').trim();
+      const id   = String(r['Project ID']   || r['Project_ID']   || '').trim();
+      const name = String(r['Project Name'] || r['Project_Name'] || '').trim();
       if (!id && !name) return;
       rows.push({
         source: 'PM',
