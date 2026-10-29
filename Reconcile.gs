@@ -404,6 +404,16 @@ const _REC_SOURCE_PRIORITY = {
   'IMS':           4
 };
 
+/** True if `a` is a better dedup rep than `b`: longer name wins, tie → source. */
+function _recRowBetter_(a, b) {
+  if (a.normalized.length !== b.normalized.length) {
+    return a.normalized.length > b.normalized.length;
+  }
+  const pa = _REC_SOURCE_PRIORITY[a.source] || 99;
+  const pb = _REC_SOURCE_PRIORITY[b.source] || 99;
+  return pa < pb;
+}
+
 function _writeRecSheet_(sheetName, rows) {
   const ss = ss_();
   let sh = ss.getSheetByName(sheetName);
@@ -426,19 +436,26 @@ function _writeRecSheet_(sheetName, rows) {
     return pa - pb;
   });
 
-  // One `pending` per name group. Uses normMatch so prefix dupes are caught too:
-  //   "ASHA PLASTIC" ≡ "ASHA PLASTIC PRODUCT"
-  //   "ACCUTEC"      ≡ "ACCUTEC TOOLING SYSTEM"
-  // normMatch requires both strings ≥6 chars for prefix merge, so short names
-  // like "ASIAN" don't accidentally eat "ASIAN EXIM S".
-  // After the lex sort above, group members sit adjacent — one walk is enough.
+  // One `pending` per name group. normMatch catches prefix dupes
+  // ("ASHA PLASTIC" ≡ "ASHA PLASTIC PRODUCT", "Omprakash" ≡ "Omprakash Ram").
+  // Within a group, keep the "better" row: longer normalized name wins
+  // (fuller record), then source priority. Swap rep if a later row is better.
   let groupRep = null;
   rows.forEach(function (r) {
     if (!r.normalized) { r.defaultStatus = 'pending'; groupRep = null; return; }
     if (groupRep && normMatch(groupRep.normalized, r.normalized)) {
-      r.defaultStatus = 'skipped';
-      r.notes = (r.notes ? r.notes + ' · ' : '') + 'auto-skipped as dup of ' +
-        groupRep.source + (groupRep.sourceId ? ':' + groupRep.sourceId : '');
+      if (_recRowBetter_(r, groupRep)) {
+        // demote current rep, promote this row
+        groupRep.defaultStatus = 'skipped';
+        groupRep.notes = (groupRep.notes ? groupRep.notes + ' · ' : '') +
+          'auto-skipped as dup of ' + r.source + (r.sourceId ? ':' + r.sourceId : '');
+        r.defaultStatus = 'pending';
+        groupRep = r;
+      } else {
+        r.defaultStatus = 'skipped';
+        r.notes = (r.notes ? r.notes + ' · ' : '') + 'auto-skipped as dup of ' +
+          groupRep.source + (groupRep.sourceId ? ':' + groupRep.sourceId : '');
+      }
     } else {
       r.defaultStatus = 'pending';
       groupRep = r;
