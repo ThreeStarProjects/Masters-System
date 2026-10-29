@@ -48,7 +48,6 @@ function reconcile_pullProjects() {
   requireAdmin_();
   const rows = [];
   const fin = _openSrcSS_('finance_sheet_id', 'Finance');
-  const pm  = _openSrcSS_('pm_sheet_id', 'PM');
 
   // Finance.M_Project — Code | Name | Active
   _readSheet_(fin, 'M_Project').forEach(function (r) {
@@ -63,18 +62,24 @@ function reconcile_pullProjects() {
     });
   });
 
-  // PM.Projects — Project_ID (PRJ-###) | Project_Name
-  _readSheet_(pm, 'Projects').forEach(function (r) {
-    const id = String(r['Project_ID'] || '').trim();
-    const name = String(r['Project_Name'] || '').trim();
-    if (!id && !name) return;
-    rows.push({
-      source: 'PM',
-      sourceId: id,
-      sourceName: name,
-      payload: r
+  // PM.Projects — Project_ID (PRJ-###) | Project_Name.
+  // Soft: PM is often empty at this stage; skip quietly if missing.
+  try {
+    const pm = _openSrcSS_('pm_sheet_id', 'PM');
+    _readSheet_(pm, 'Projects').forEach(function (r) {
+      const id = String(r['Project_ID'] || '').trim();
+      const name = String(r['Project_Name'] || '').trim();
+      if (!id && !name) return;
+      rows.push({
+        source: 'PM',
+        sourceId: id,
+        sourceName: name,
+        payload: r
+      });
     });
-  });
+  } catch (e) {
+    Logger.log('PM Projects pull skipped: ' + e.message);
+  }
 
   _writeRecSheet_(REC_SHEETS.Projects, rows);
   SpreadsheetApp.getUi().alert('Rec_Projects built: ' + rows.length + ' rows.');
