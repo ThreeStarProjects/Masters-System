@@ -103,9 +103,19 @@ function applyHeaders_(sheetName) {
 
 function seedConfigIfEmpty_() {
   const sh = sh_(SH.CONFIG);
-  if (sh.getLastRow() >= 2) return;
-  const rows = CONFIG_SEED.map(r => [r[0], r[1], r[2]]);
-  sh.getRange(2, 1, rows.length, 3).setValues(rows);
+  if (sh.getLastRow() < 2) {
+    const rows = CONFIG_SEED.map(r => [r[0], r[1], r[2]]);
+    sh.getRange(2, 1, rows.length, 3).setValues(rows);
+    return;
+  }
+  // Additive: append any CONFIG_SEED keys not already in the sheet.
+  // Lets us ship new config keys to an existing deployment without wiping state.
+  const existing = {};
+  const last = sh.getLastRow();
+  sh.getRange(2, 1, last - 1, 1).getValues().forEach(r => {
+    existing[String(r[0]).trim()] = true;
+  });
+  CONFIG_SEED.forEach(r => { if (!existing[r[0]]) sh.appendRow([r[0], r[1], r[2]]); });
 }
 
 function seedSitesIfEmpty_() {

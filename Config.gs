@@ -5,7 +5,7 @@
  * seed data. Everything downstream reads from here.
  */
 
-const MS_VERSION = '0.2.2';
+const MS_VERSION = '0.3.0';
 
 // -----------------------------------------------------------------------------
 // Permissions — seed values written on first-time setup. After setup the live
@@ -255,7 +255,10 @@ const CONFIG_SEED = [
   ['next_emp',           '1',                                    'Next Emp_ID counter'],
   ['next_site',          '3',                                    'Next Site_ID counter (2 seeded)'],
   ['cache_ttl_seconds',  '300',                                  'Library cache TTL in consumer scripts'],
-  ['soft_delete_only',   'true',                                 'Never hard-delete; set Active?=No instead']
+  ['soft_delete_only',   'true',                                 'Never hard-delete; set Active?=No instead'],
+  ['finance_sheet_id',   '',                                     'Finance system spreadsheet ID (for Reconcile v0.3)'],
+  ['ims_sheet_id',       '',                                     'IMS spreadsheet ID (for Reconcile v0.3)'],
+  ['pm_sheet_id',        '',                                     'Project-Management spreadsheet ID (for Reconcile v0.3)']
 ];
 
 const SITES_SEED = [
