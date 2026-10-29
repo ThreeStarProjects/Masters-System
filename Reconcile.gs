@@ -49,16 +49,16 @@ function reconcile_pullProjects() {
   const rows = [];
   const fin = _openSrcSS_('finance_sheet_id', 'Finance');
 
-  // Finance.M_Project — Code | Name | Active
+  // Finance.M_Project — Project_Code | Project_Name | Active
   _readSheet_(fin, 'M_Project').forEach(function (r) {
-    const code = String(r['Code'] || '').trim();
-    const name = String(r['Name'] || '').trim();
+    const code = String(r['Project_Code'] || '').trim();
+    const name = String(r['Project_Name'] || '').trim();
     if (!name) return;
     rows.push({
       source: 'Finance',
       sourceId: code,
       sourceName: name,
-      payload: { Name: name, Code: code, Active: r['Active'] }
+      payload: { Name: name, Project_Code: code, Active: r['Active'] }
     });
   });
 
@@ -391,8 +391,19 @@ function _readDropdownsColumn_(ss, columnName) {
 
 /**
  * Build / overwrite a Rec_<Entity> sheet.
- * Sorts rows by Normalized so cross-source duplicates sit next to each other.
+ * Sorts by Normalized so cross-source duplicates sit next to each other, and
+ * auto-dedups within each normalized-name group: ONE row (highest-priority
+ * source) stays `pending`, siblings become `skipped`. Admin un-skips to
+ * override. Source priority: Finance > IMS-Supplier > IMS-JobWorker > PM > IMS.
  */
+const _REC_SOURCE_PRIORITY = {
+  'Finance':       1,
+  'IMS-Supplier':  2,
+  'IMS-JobWorker': 2,
+  'PM':            3,
+  'IMS':           4
+};
+
 function _writeRecSheet_(sheetName, rows) {
   const ss = ss_();
   let sh = ss.getSheetByName(sheetName);
@@ -408,12 +419,31 @@ function _writeRecSheet_(sheetName, rows) {
 
   // Normalize + sort
   rows.forEach(function (r) { r.normalized = normName(r.sourceName); });
-  rows.sort(function (a, b) { return a.normalized < b.normalized ? -1 : a.normalized > b.normalized ? 1 : 0; });
+  rows.sort(function (a, b) {
+    if (a.normalized !== b.normalized) return a.normalized < b.normalized ? -1 : 1;
+    const pa = _REC_SOURCE_PRIORITY[a.source] || 99;
+    const pb = _REC_SOURCE_PRIORITY[b.source] || 99;
+    return pa - pb;
+  });
+
+  // One `pending` per normalized-name group, siblings default to `skipped`.
+  // Blank normalized names are each on their own (no auto-dedup).
+  const seen = {};
+  rows.forEach(function (r) {
+    if (!r.normalized) { r.defaultStatus = 'pending'; return; }
+    if (seen[r.normalized]) {
+      r.defaultStatus = 'skipped';
+      r.notes = (r.notes ? r.notes + ' · ' : '') + 'auto-skipped as dup of ' + seen[r.normalized];
+    } else {
+      r.defaultStatus = 'pending';
+      seen[r.normalized] = r.source + (r.sourceId ? ':' + r.sourceId : '');
+    }
+  });
 
   if (rows.length) {
     const data = rows.map(function (r) {
       return [
-        'pending',
+        r.defaultStatus,
         '',                                  // Target_Master_ID
         r.source,
         r.sourceId || '',
