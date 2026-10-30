@@ -690,6 +690,36 @@ function reconcile_linkCustomersToProjects() {
 }
 
 // -----------------------------------------------------------------------------
+// Reset — Projects only. PM owns project creation from now on.
+// -----------------------------------------------------------------------------
+function reconcile_resetProjectsOnly() {
+  requireAdmin_();
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.alert(
+    'Reset Projects only?',
+    'This will DELETE all rows from:\n' +
+    '  • Projects\n' +
+    '  • Rec_Projects\n\n' +
+    'And reset next_prj counter to 1.\n\n' +
+    'Customers, Parties, Employees, Sites, Audit_Log, Config kept.\n' +
+    'After this: PM becomes the source of truth for new projects.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+
+  const ss = ss_();
+  const sh = ss.getSheetByName('Projects');
+  if (sh && sh.getLastRow() >= 2) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).clearContent();
+  }
+  const recSh = ss.getSheetByName('Rec_Projects');
+  if (recSh) ss.deleteSheet(recSh);
+  setConfigValue_internal_('next_prj', '1');
+  ui.alert('Projects reset. PM now owns project creation.');
+}
+
+// -----------------------------------------------------------------------------
 // Reset — wipe Projects/Customers/Parties/Employees + Rec_* + reset counters.
 // Keeps Sites (seeded), Config, Audit_Log headers.
 // -----------------------------------------------------------------------------
