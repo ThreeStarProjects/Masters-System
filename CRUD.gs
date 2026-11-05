@@ -20,7 +20,7 @@
  */
 function entity_list(entityName, opts) {
   if (!SCHEMA[entityName]) throw new Error('Unknown entity: ' + entityName);
-  var sh = SpreadsheetApp.getActive().getSheetByName(entityName);
+  var sh = ss_().getSheetByName(entityName);
   if (!sh) throw new Error('Sheet missing: ' + entityName);
   var last = sh.getLastRow();
   var cols = sh.getLastColumn();

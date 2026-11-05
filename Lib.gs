@@ -8,7 +8,8 @@
 // -----------------------------------------------------------------------------
 // Spreadsheet access
 // -----------------------------------------------------------------------------
-function ss_() { return SpreadsheetApp.getActive(); }
+var MASTERS_SS_ID = '18Qhz-HeQ_leq_cA9dzRlTVUPOBMGwQ43X_GMsmgxydg';
+function ss_() { return SpreadsheetApp.openById(MASTERS_SS_ID); }
 function sh_(name) {
   const s = ss_().getSheetByName(name);
   if (!s) throw new Error('Sheet missing: ' + name + '. Run First-time setup.');
