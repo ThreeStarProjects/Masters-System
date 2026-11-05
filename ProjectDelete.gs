@@ -8,13 +8,14 @@
  *   Masters.registerSystemSheet('finance'|'ims', spreadsheetId)  (each system calls it when opened)
  *
  * Runs here but works on the OTHER spreadsheets through openById (never getActive: in a library
- * that is the caller's sheet). What counts as "the project's rows":
- *   PM       exact PM rows (Projects, Milestones, Hardware List, Purchases, Production, Snags, Tickets)
- *   IMS      Reservation Register, Material Requisition Register, FG Delivery Register (+ its lines)
- *            whose project text contains the PRJ-### id OR is a text paired to this project in Project_Map
+ * that is the caller's sheet). What counts as "the project's rows" (deliberately strict):
+ *   PM       Projects, Milestones, Hardware List, Purchases, Production, Snags, Tickets: the PRJ-### id or exact label
+ *   IMS      Reservation Register, Material Requisition Register, FG Delivery Register (+ its lines):
+ *            project text containing the exact PRJ-### id
  *   Finance  Project_Costs, Bills, Bill_Payments, Bill_Allocations, Invoices, Payments and every
- *            Transactions_<FY> sheet whose Project is the PRJ-### label OR a Finance project this
- *            project is paired with in Project_Map
+ *            Transactions_<FY>: project text EQUAL to the exact PM label ("PRJ-001 — Name") only.
+ *            Finance has project codes of its own, so a bare PRJ-001 there is NOT treated as ours.
+ * Project_Map pairings are shown in the preview but never widen what is deleted.
  * This is a HARD delete: rows are removed, nothing is copied anywhere. Order: Finance, IMS, PM,
  * then Masters itself (the Projects record and every Project_Map pairing for it). PM goes last and
  * Masters only when all three succeeded, so a partial failure can simply be run again. The IMS stock
@@ -66,10 +67,11 @@ function _pdContext_(projectId, pmLabel) {
   if (!/^PRJ-\d+$/.test(id)) throw new Error('Bad project id: ' + projectId);
   const rec = readAll_('Projects').filter(function (r) { return String(r.Project_ID).toUpperCase() === id; })[0];
   const label = String(pmLabel || (rec ? rec.Project_ID + ' — ' + rec.Name : id));
+  // Pairings (Project_Map) are only SHOWN in the preview, never used to delete: a pairing can point at a real
+  // Finance project (e.g. a test PRJ paired to a live project), and Finance has project codes of its own.
   const map = getProjectMap();                       // KEY(upper) → Finance project label
-  const finLabels = {}, aliases = {};
-  Object.keys(map).forEach(function (k) { if (k === id) finLabels[String(map[k]).trim().toUpperCase()] = map[k]; });
-  Object.keys(map).forEach(function (k) { if (finLabels[String(map[k]).trim().toUpperCase()]) aliases[k] = true; });
+  const paired = [];
+  Object.keys(map).forEach(function (k) { if (k === id) paired.push(String(map[k])); });
   // the exact id, not inside a longer word or number: PRJ-001 matches "PRJ-001 — Test" but not "PRJ-0012"
   const hasId = function (t) {
     const u = String(t).toUpperCase();
@@ -79,12 +81,13 @@ function _pdContext_(projectId, pmLabel) {
     }
     return false;
   };
+  const isLabel = function (t) { return String(t).trim().toUpperCase() === label.toUpperCase(); };
   return {
-    id: id, label: label, inMasters: !!rec, aliasKeys: Object.keys(aliases),
+    id: id, label: label, inMasters: !!rec, paired: paired, aliasKeys: [],
     test: {
-      pm:  function (t) { return hasId(t) || String(t).trim().toUpperCase() === label.toUpperCase(); },
-      ims: function (t) { return hasId(t) || !!aliases[String(t).trim().toUpperCase()]; },
-      fin: function (t) { return hasId(t) || !!finLabels[String(t).trim().toUpperCase()]; }
+      pm:  function (t) { return hasId(t) || isLabel(t); },
+      ims: function (t) { return hasId(t); },
+      fin: function (t) { return isLabel(t); }       // Finance: only the exact PM label, "PRJ-001 — Name"
     }
   };
 }
@@ -98,11 +101,11 @@ function _pdPlanSheet_(ss, name, spec, test) {
   const head = sh.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
   const col = spec.c || (head.indexOf(String(spec.h).toLowerCase()) + 1);
   if (!col) return { name: name, rows: [], note: 'no "' + spec.h + '" column' };
-  const rows = [];
+  const rows = [], texts = {};
   sh.getRange(2, 1, last - 1, width).getValues().forEach(function (r, i) {
-    if (r[col - 1] !== '' && test(r[col - 1])) rows.push({ n: i + 2, vals: r });
+    if (r[col - 1] !== '' && test(r[col - 1])) { rows.push({ n: i + 2, vals: r }); texts[String(r[col - 1])] = true; }
   });
-  return { name: name, sh: sh, rows: rows, head: head };
+  return { name: name, sh: sh, rows: rows, head: head, texts: Object.keys(texts).slice(0, 4) };
 }
 
 /** All plan items for one system. */
@@ -129,7 +132,7 @@ function _pdPlan_(ss, sys, ctx) {
 
 function _pdCounts_(plan) {
   return plan.filter(function (p) { return p.rows.length || p.note; })
-    .map(function (p) { return { sheet: p.name, n: p.rows.length, note: p.note || '' }; });
+    .map(function (p) { return { sheet: p.name, n: p.rows.length, note: p.note || '', names: p.texts || [] }; });
 }
 
 function _pdOpen_(sys, pmSheetId) {
@@ -142,7 +145,7 @@ function _pdOpen_(sys, pmSheetId) {
 function previewProjectDelete(projectId, pmSheetId, pmLabel) {
   requireEditor_();
   const ctx = _pdContext_(projectId, pmLabel);
-  const out = { projectId: ctx.id, label: ctx.label, inMasters: ctx.inMasters, aliases: ctx.aliasKeys, systems: {}, problems: [] };
+  const out = { projectId: ctx.id, label: ctx.label, inMasters: ctx.inMasters, aliases: [], paired: ctx.paired, systems: {}, problems: [] };
   ['fin', 'ims', 'pm'].forEach(function (sys) {
     const o = _pdOpen_(sys, pmSheetId);
     if (o.err) { out.problems.push(o.err); out.systems[sys] = []; return; }
