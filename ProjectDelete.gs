@@ -15,13 +15,13 @@
  *   Finance  Project_Costs, Bills, Bill_Payments, Bill_Allocations, Invoices, Payments and every
  *            Transactions_<FY> sheet whose Project is the PRJ-### label OR a Finance project this
  *            project is paired with in Project_Map
- * Every removed row is first copied (as JSON) to a hidden "_Deleted_Project_Rows" sheet in the
- * system it came from. PM goes LAST and the Masters record only when all systems succeeded, so a
- * partial failure can simply be run again. The IMS stock snapshots are refreshed by IMS itself
- * (marker sheet "_PD_Refresh", picked up by its 1-minute trigger).
+ * This is a HARD delete: rows are removed, nothing is copied anywhere. Order: Finance, IMS, PM,
+ * then Masters itself (the Projects record and every Project_Map pairing for it). PM goes last and
+ * Masters only when all three succeeded, so a partial failure can simply be run again. The IMS stock
+ * snapshots are refreshed by IMS itself: a temporary hidden sheet "_PD_Refresh" lists the item codes,
+ * IMS's 1-minute trigger refreshes them and deletes the sheet.
  */
 
-const PD_BACKUP = '_Deleted_Project_Rows';
 const PD_LOG = 'Project_Deletes';
 const PD_REFRESH = '_PD_Refresh';
 const PD_IMS_DEFAULT_ID = '1CglvPxUWZnIHNeToGEDz8-Xj3eNfvaF351j_ogpRTgk';
@@ -144,19 +144,11 @@ function previewProjectDelete(projectId, pmSheetId, pmLabel) {
   return out;
 }
 
-/** Copy the rows to the system's backup sheet, then delete them bottom-up (contiguous runs in one call). */
-function _pdApply_(ss, plan, reqId, projectId) {
-  const now = new Date(), me = getUserEmail();
-  const bk = ss.getSheetByName(PD_BACKUP) || ss.insertSheet(PD_BACKUP);
-  if (bk.getLastRow() < 1) {
-    bk.getRange(1, 1, 1, 6).setValues([['Deleted_At', 'Request', 'Project', 'Sheet', 'Row_Was', 'Row_JSON']]).setFontWeight('bold');
-    bk.hideSheet();
-  }
+/** Delete the planned rows bottom-up (runs of consecutive rows in one call). Returns [{sheet, n}]. */
+function _pdApply_(plan) {
   const log = [];
   plan.forEach(function (p) {
     if (!p.rows.length) return;
-    const lines = p.rows.map(function (r) { return [now, reqId, projectId, p.name, r.n, JSON.stringify(r.vals)]; });
-    bk.getRange(bk.getLastRow() + 1, 1, lines.length, 6).setValues(lines);   // backup first, always
     const nums = p.rows.map(function (r) { return r.n; }).sort(function (a, b) { return b - a; });
     let i = 0;
     while (i < nums.length) {                                                 // runs of consecutive rows
@@ -205,30 +197,28 @@ function executeProjectDelete(projectId, pmSheetId, pmLabel, typedId) {
       if (res.problems.length) return;                 // an earlier system failed: leave the rest untouched
       try {
         const plan = _pdPlan_(open[sys], sys, ctx);
-        res.deleted[sys] = _pdApply_(open[sys], plan, reqId, ctx.id);
+        res.deleted[sys] = _pdApply_(plan);
         if (sys === 'ims') res.imsCodesQueued = _pdQueueImsRefresh_(open[sys], plan);
       } catch (e) { res.problems.push(PD_SYSTEM_NAME[sys] + ': ' + e.message); }
     });
     if (res.problems.length) return res;
 
-    // Masters itself: the project record and its pairings
+    // Masters itself: the project record and its pairings (hard delete, no copy of the data is kept)
     const sh = sh_('Projects');
     const rowNum = _findRowNum(sh, headerIndex_('Projects')['Project_ID'], ctx.id);
-    if (rowNum) {
-      const headers = SCHEMA['Projects'].headers;
-      const old = sh.getRange(rowNum, 1, 1, headers.length).getValues()[0];
-      sh.deleteRow(rowNum);
-      audit_('Projects', ctx.id, 'HardDelete', '', JSON.stringify(_rowToObj_(headers, old)), '', 'Project delete ' + reqId);
-    }
+    let removedMap = 0;
+    if (rowNum) sh.deleteRow(rowNum);
     const keys = {}; ctx.aliasKeys.concat([ctx.id]).forEach(function (k) { keys[k] = true; });
     const ms = ss_().getSheetByName(PMAP_SHEET);
     if (ms && ms.getLastRow() >= 2) {
       const ids = ms.getRange(2, 1, ms.getLastRow() - 1, 1).getValues();
-      for (let i = ids.length - 1; i >= 0; i--) if (keys[String(ids[i][0]).trim().toUpperCase()]) ms.deleteRow(i + 2);
+      for (let i = ids.length - 1; i >= 0; i--) if (keys[String(ids[i][0]).trim().toUpperCase()]) { ms.deleteRow(i + 2); removedMap++; }
     }
+    res.deleted.masters = [{ sheet: 'Projects', n: rowNum ? 1 : 0 }, { sheet: 'Project_Map', n: removedMap }];
+    audit_('Projects', ctx.id, 'HardDelete', '', '', '', 'Project delete ' + reqId);   // who/when only, no row data
     const lg = ss_().getSheetByName(PD_LOG) || ss_().insertSheet(PD_LOG);
-    if (lg.getLastRow() < 1) lg.getRange(1, 1, 1, 6).setValues([['Request_ID', 'Project_ID', 'Project', 'At', 'By', 'Deleted']]).setFontWeight('bold');
-    lg.appendRow([reqId, ctx.id, ctx.label, new Date(), getUserEmail(), JSON.stringify(res.deleted)]);
+    if (lg.getLastRow() < 1) lg.getRange(1, 1, 1, 5).setValues([['Request_ID', 'Project_ID', 'Project', 'At', 'By']]).setFontWeight('bold');
+    lg.appendRow([reqId, ctx.id, ctx.label, new Date(), getUserEmail()]);
     res.complete = true;
     return res;
   });
