@@ -5,7 +5,7 @@
  * seed data. Everything downstream reads from here.
  */
 
-const MS_VERSION = '0.3.0';
+const MS_VERSION = '0.4.0';
 
 // -----------------------------------------------------------------------------
 // Permissions — seed values written on first-time setup. After setup the live
