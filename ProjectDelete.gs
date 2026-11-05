@@ -70,8 +70,15 @@ function _pdContext_(projectId, pmLabel) {
   const finLabels = {}, aliases = {};
   Object.keys(map).forEach(function (k) { if (k === id) finLabels[String(map[k]).trim().toUpperCase()] = map[k]; });
   Object.keys(map).forEach(function (k) { if (finLabels[String(map[k]).trim().toUpperCase()]) aliases[k] = true; });
-  const re = new RegExp('(^|[^A-Z0-9])' + id.replace(/[-]/g, '\\-') + '(?![0-9])');
-  const hasId = function (t) { return re.test(String(t).toUpperCase()); };
+  // the exact id, not inside a longer word or number: PRJ-001 matches "PRJ-001 — Test" but not "PRJ-0012"
+  const hasId = function (t) {
+    const u = String(t).toUpperCase();
+    for (let at = u.indexOf(id); at >= 0; at = u.indexOf(id, at + 1)) {
+      const before = at === 0 ? '' : u.charAt(at - 1), after = u.charAt(at + id.length);
+      if (!/[A-Z0-9]/.test(before) && !/[0-9]/.test(after)) return true;
+    }
+    return false;
+  };
   return {
     id: id, label: label, inMasters: !!rec, aliasKeys: Object.keys(aliases),
     test: {
