@@ -41,7 +41,8 @@ const PD_TARGETS = {
   fin: [
     { s: 'Project_Costs', h: 'Project' }, { s: 'Bills', h: 'Project' }, { s: 'Bill_Payments', h: 'Project' },
     { s: 'Bill_Allocations', h: 'Project' }, { s: 'Invoices', h: 'Project' }, { s: 'Payments', h: 'Project' },
-    { prefix: 'Transactions_', h: 'Project' }
+    { prefix: 'Transactions_', h: 'Project' },
+    { s: 'M_Project', h: 'Project_Code', own: true }   // Finance's project list: only OUR row (same code AND same name)
   ]
 };
 const PD_SYSTEM_NAME = { pm: 'PM', ims: 'IMS', fin: 'Finance' };
@@ -82,12 +83,17 @@ function _pdContext_(projectId, pmLabel) {
     return false;
   };
   const isLabel = function (t) { return String(t).trim().toUpperCase() === label.toUpperCase(); };
+  const at = label.indexOf(' — '), pname = (rec ? String(rec.Name) : (at >= 0 ? label.slice(at + 3) : '')).trim().toLowerCase();
   return {
     id: id, label: label, inMasters: !!rec, paired: paired, aliasKeys: [],
     test: {
       pm:  function (t) { return hasId(t) || isLabel(t); },
       ims: function (t) { return hasId(t); },
-      fin: function (t) { return isLabel(t); }       // Finance: only the exact PM label, "PRJ-001 — Name"
+      fin: function (t) { return isLabel(t); },       // Finance: only the exact PM label, "PRJ-001 — Name"
+      ownProject: function (code, row, head) {        // a project-list row is ours only when code AND name agree
+        const n = head.indexOf('project_name');
+        return String(code).trim().toUpperCase() === id && n >= 0 && String(row[n]).trim().toLowerCase() === pname && pname !== '';
+      }
     }
   };
 }
@@ -103,7 +109,7 @@ function _pdPlanSheet_(ss, name, spec, test) {
   if (!col) return { name: name, rows: [], note: 'no "' + spec.h + '" column' };
   const rows = [], texts = {};
   sh.getRange(2, 1, last - 1, width).getValues().forEach(function (r, i) {
-    if (r[col - 1] !== '' && test(r[col - 1])) { rows.push({ n: i + 2, vals: r }); texts[String(r[col - 1])] = true; }
+    if (r[col - 1] !== '' && test(r[col - 1], r, head)) { rows.push({ n: i + 2, vals: r }); texts[String(r[col - 1])] = true; }
   });
   return { name: name, sh: sh, rows: rows, head: head, texts: Object.keys(texts).slice(0, 4) };
 }
@@ -116,7 +122,7 @@ function _pdPlan_(ss, sys, ctx) {
       ? ss.getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return n.indexOf(spec.prefix) === 0; })
       : [spec.s];
     names.forEach(function (name) {
-      const item = _pdPlanSheet_(ss, name, spec, test);
+      const item = _pdPlanSheet_(ss, name, spec, spec.own ? ctx.test.ownProject : test);
       item.codeH = spec.codeH;
       out.push(item);
       if (spec.lines && item.rows.length) {  // child rows of the deleted parents (FG Delivery Lines by DC No)
