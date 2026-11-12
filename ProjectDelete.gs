@@ -42,7 +42,8 @@ const PD_TARGETS = {
     { s: 'Project_Costs', h: 'Project' }, { s: 'Bills', h: 'Project' }, { s: 'Bill_Payments', h: 'Project' },
     { s: 'Bill_Allocations', h: 'Project' }, { s: 'Invoices', h: 'Project' }, { s: 'Payments', h: 'Project' },
     { prefix: 'Transactions_', h: 'Project' },
-    { s: 'M_Project', h: 'Project_Code', own: true }   // Finance's project list: only OUR row (same code AND same name)
+    { s: 'M_Project', h: 'Project_Code', own: true },   // Finance's project list: only OUR row (same code AND same name)
+    { s: 'IMS_Cost_Log', h: 'Project', own: 'log' }      // the import's own log: rows whose Project is exactly this PRJ-###
   ]
 };
 const PD_SYSTEM_NAME = { pm: 'PM', ims: 'IMS', fin: 'Finance' };
@@ -54,6 +55,12 @@ function registerSystemSheet(system, id) {
   if (!/^[A-Za-z0-9_-]{20,}$/.test(String(id || ''))) throw new Error('Bad spreadsheet id');
   if (getConfigValue('sheet_id_' + system) !== String(id)) setConfigValue_internal_('sheet_id_' + system, String(id));
   return true;
+}
+
+/** { ims, finance } spreadsheet ids the systems registered (empty string = not registered yet). Used by PM's self-test. */
+function getSystemSheetIds() {
+  requireEditor_();
+  return { ims: _pdSheetId_('ims'), finance: _pdSheetId_('fin') };
 }
 
 function _pdSheetId_(sys) {
@@ -90,6 +97,7 @@ function _pdContext_(projectId, pmLabel) {
       pm:  function (t) { return hasId(t) || isLabel(t); },
       ims: function (t) { return hasId(t); },
       fin: function (t) { return isLabel(t); },       // Finance: only the exact PM label, "PRJ-001 — Name"
+      ownLog: function (t) { return String(t).trim().toUpperCase() === id; },
       ownProject: function (code, row, head) {        // a project-list row is ours only when code AND name agree
         const n = head.indexOf('project_name');
         return String(code).trim().toUpperCase() === id && n >= 0 && String(row[n]).trim().toLowerCase() === pname && pname !== '';
@@ -122,7 +130,7 @@ function _pdPlan_(ss, sys, ctx) {
       ? ss.getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return n.indexOf(spec.prefix) === 0; })
       : [spec.s];
     names.forEach(function (name) {
-      const item = _pdPlanSheet_(ss, name, spec, spec.own ? ctx.test.ownProject : test);
+      const item = _pdPlanSheet_(ss, name, spec, spec.own === 'log' ? ctx.test.ownLog : spec.own ? ctx.test.ownProject : test);
       item.codeH = spec.codeH;
       out.push(item);
       if (spec.lines && item.rows.length) {  // child rows of the deleted parents (FG Delivery Lines by DC No)
