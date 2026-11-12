@@ -28,10 +28,7 @@ function onOpen() {
       .addItem('Import approved · Parties',   'reconcile_importParties')
       .addItem('Import approved · Employees', 'reconcile_importEmployees')
       .addSeparator()
-      .addItem('Link Customers → Projects (from Finance invoices)', 'reconcile_linkCustomersToProjects')
-      .addSeparator()
-      .addItem('Reset Projects only (PM owns from now on)', 'reconcile_resetProjectsOnly')
-      .addItem('⚠ Reset ALL migration data', 'reconcile_resetMigration'))
+      .addItem('Link Customers → Projects (from Finance invoices)', 'reconcile_linkCustomersToProjects'))
     .addSeparator()
     .addItem('About', 'menu_about_')
     .addToUi();
