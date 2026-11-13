@@ -39,7 +39,7 @@ const PD_TARGETS = {
     { s: 'FG Delivery Register', h: 'Project', keyH: 'DC No', lines: { s: 'FG Delivery Lines', h: 'DC No' } }
   ],
   fin: [
-    { s: 'Project_Costs', h: 'Project' }, { s: 'Bills', h: 'Project' }, { s: 'Bill_Payments', h: 'Project' },
+    { s: 'Project_Costs', h: 'Project' }, { s: 'Man_Hour_Costs', h: 'Project' }, { s: 'Bills', h: 'Project' }, { s: 'Bill_Payments', h: 'Project' },
     { s: 'Bill_Allocations', h: 'Project' }, { s: 'Invoices', h: 'Project' }, { s: 'Payments', h: 'Project' },
     { prefix: 'Transactions_', h: 'Project' },
     { s: 'M_Project', h: 'Project_Code', own: true },   // Finance's project list: only OUR row (same code AND same name)
