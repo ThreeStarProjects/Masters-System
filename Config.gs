@@ -134,6 +134,7 @@ const SCHEMA = {
       'Payment_Terms_Days',
       'Is_Supplier?', 'Is_JobWorker?', 'Is_Transporter?', 'Is_ServiceProv?',
       'Active?',
+      'Category', 'Finance_ID', 'IMS_Supplier_Code', 'IMS_JW_Code',   // Category = supplier category / job-worker process type. The codes are the other systems' own codes (filled by their syncs).
       'Created_At', 'Created_By', 'Updated_At', 'Updated_By'
     ],
     idCol: 'Party_ID',
@@ -159,7 +160,11 @@ const SCHEMA = {
       'Is_JobWorker?':       { type: 'yesno',   default: 'No' },
       'Is_Transporter?':     { type: 'yesno',   default: 'No' },
       'Is_ServiceProv?':     { type: 'yesno',   default: 'No' },
-      'Active?':             { type: 'yesno',   default: 'Yes' }
+      'Active?':             { type: 'yesno',   default: 'Yes' },
+      'Category':            { type: 'text',     hint: 'Supplier category, or the job worker\'s process type' },
+      'Finance_ID':          { type: 'text',     hint: "Finance's own vendor code (VEND-xxxx). Finance is the master for its vendors; filled by Finance's sync, do not edit" },
+      'IMS_Supplier_Code':   { type: 'text',     hint: "IMS's supplier code (SUPP-xxxx), used in POs and GRNs. Filled by IMS, do not edit" },
+      'IMS_JW_Code':         { type: 'text',     hint: "IMS's job worker code (JW-xxxx), used in job work challans. Filled by IMS, do not edit" }
     }
   },
 

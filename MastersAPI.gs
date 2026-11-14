@@ -28,32 +28,31 @@ function updateCustomer(id, data)   { return entity_save('Customers', Object.ass
 function deleteCustomer(id)         { return entity_softDelete('Customers', id); }
 
 /**
- * FINANCE IS THE MASTER FOR CUSTOMERS; Masters holds a copy for IMS / PM. Finance calls this with every customer it has:
+ * FINANCE IS THE MASTER FOR CUSTOMERS AND VENDORS; Masters holds a copy for IMS / PM. Finance calls this with every customer (or vendor) it has:
  *   list = [{ financeId:'CUST-0015', name, gstin?, email?, phone?, address?, active? (false = inactive) }]
- * Each Finance customer is matched to a Masters customer by (1) Finance_ID, (2) the approved Rec_Customers row (Source_ID -> Target_Master_ID),
- * (3) the same name (case / punctuation / spaces ignored, only if that Masters customer is not yet linked). A match gets the Finance_ID
- * stored (bulk, no audit spam) and any CHANGED Finance value copied over (name, GSTIN, email, phone, billing address, active); a blank
- * Finance value never blanks Masters. No match -> a new Masters customer. Customers only in Masters are left alone and listed.
- * Writes are capped at `max` (default 20) per call; { more:true } = call again. Editors only.
- * -> { total, linked, created, updated, unchanged, more, mastersOnly:[names] }
+ * Each Finance row is matched to a Masters row by (1) Finance_ID, (2) the approved Rec_ row (Source_ID -> Target_Master_ID),
+ * (3) the same name (case / punctuation / spaces ignored, only if that Masters row is not yet linked). A match gets the Finance_ID
+ * stored (bulk, no audit spam) and any CHANGED Finance value copied over (name, GSTIN, email, phone, address, active); a blank
+ * Finance value never blanks Masters. No match -> a new Masters row. Writes are capped at `max` (default 20) per call; { more:true } = call again.
+ * Editors only. -> { total, linked, created, updated, unchanged, more, mastersOnly:[names] }   (mastersOnly: customers only)
  */
-function syncCustomersFromFinance(list, max) {
+function syncFromFinance_(cfg, list, max) {
   requireEditor_();
   const key = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
   const t = function (v) { return String(v == null ? '' : v).trim(); };
   const cap = max > 0 ? max : 20;
-  const sh = sh_('Customers');
-  ensureColumns_(sh, SCHEMA['Customers'].headers);
-  const rows = entity_list('Customers', {});
+  const sh = sh_(cfg.entity), idCol = SCHEMA[cfg.entity].idCol;
+  ensureColumns_(sh, SCHEMA[cfg.entity].headers);
+  const rows = entity_list(cfg.entity, {});
   const byFin = {}, byId = {}, byName = {};
   rows.forEach(function (r) {
-    byId[r.Customer_ID] = r;
+    byId[r[idCol]] = r;
     if (t(r.Finance_ID)) byFin[t(r.Finance_ID)] = r;
   });
   rows.forEach(function (r) { const k = key(r.Name); if (k && !t(r.Finance_ID) && !byName[k]) byName[k] = r; });
   const rec = {};
   try {
-    const rs = ss_().getSheetByName('Rec_Customers');
+    const rs = ss_().getSheetByName(cfg.rec);
     if (rs && rs.getLastRow() >= 2) {
       const h = rs.getRange(1, 1, 1, rs.getLastColumn()).getValues()[0], iS = h.indexOf('Source'), iI = h.indexOf('Source_ID'), iT = h.indexOf('Target_Master_ID');
       if (iS >= 0 && iI >= 0 && iT >= 0) rs.getRange(2, 1, rs.getLastRow() - 1, h.length).getValues().forEach(function (r) {
@@ -68,39 +67,152 @@ function syncCustomersFromFinance(list, max) {
     if (!fid || !name) return;
     res.total++;
     let m = byFin[fid];
-    if (!m && rec[fid]) { const c = byId[rec[fid]]; if (c && (!t(c.Finance_ID) || t(c.Finance_ID) === fid) && !claimed[c.Customer_ID]) m = c; }
-    if (!m) { const c = byName[key(name)]; if (c && !t(c.Finance_ID) && !claimed[c.Customer_ID]) m = c; }
-    if (!m) { writes.push({ fid: fid, data: { Name: name, GSTIN: t(f.gstin), Email: t(f.email), Phone: t(f.phone), Billing_Address: t(f.address), 'Active?': f.active === false ? 'No' : 'Yes', Finance_ID: fid } }); return; }
-    claimed[m.Customer_ID] = true;
-    if (t(m.Finance_ID) !== fid) { link[m.Customer_ID] = fid; res.linked++; }
-    const d = { Customer_ID: m.Customer_ID }; let any = false;
+    if (!m && rec[fid]) { const c = byId[rec[fid]]; if (c && (!t(c.Finance_ID) || t(c.Finance_ID) === fid) && !claimed[c[idCol]]) m = c; }
+    if (!m) { const c = byName[key(name)]; if (c && !t(c.Finance_ID) && !claimed[c[idCol]]) m = c; }
+    if (!m) {
+      const nd = Object.assign({ Name: name, GSTIN: t(f.gstin), Email: t(f.email), Phone: t(f.phone), 'Active?': f.active === false ? 'No' : 'Yes', Finance_ID: fid }, cfg.extra);
+      nd[cfg.addr] = t(f.address);
+      writes.push({ fid: fid, data: nd }); return;
+    }
+    claimed[m[idCol]] = true;
+    if (t(m.Finance_ID) !== fid) { link[m[idCol]] = fid; res.linked++; }
+    const d = {}; d[idCol] = m[idCol]; let any = false;
     const set = function (field, val) { if (val !== '' && t(m[field]) !== val) { d[field] = val; any = true; } };
-    set('Name', name); set('GSTIN', t(f.gstin)); set('Email', t(f.email)); set('Phone', t(f.phone)); set('Billing_Address', t(f.address));
+    set('Name', name); set('GSTIN', t(f.gstin)); set('Email', t(f.email)); set('Phone', t(f.phone)); set(cfg.addr, t(f.address));
     const act = f.active === false ? 'No' : 'Yes';
     if (String(m['Active?'] || 'Yes').toLowerCase() !== act.toLowerCase()) { d['Active?'] = act; any = true; }
-    if (any) writes.push({ fid: fid, data: d }); else if (!link[m.Customer_ID]) res.unchanged++;
+    if (any) writes.push({ fid: fid, data: d }); else if (!link[m[idCol]]) res.unchanged++;
   });
   // 1. Finance_ID links in one bulk write
   const lids = Object.keys(link);
   if (lids.length) {
     withLock_(function () {
-      const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0], cId = hdr.indexOf('Customer_ID'), cF = hdr.indexOf('Finance_ID');
+      const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0], cId = hdr.indexOf(idCol), cF = hdr.indexOf('Finance_ID');
       const n = sh.getLastRow() - 1;
       const ids = sh.getRange(2, cId + 1, n, 1).getValues(), fin = sh.getRange(2, cF + 1, n, 1).getValues();
       for (let i = 0; i < n; i++) if (link[ids[i][0]]) fin[i][0] = link[ids[i][0]];
       sh.getRange(2, cF + 1, n, 1).setValues(fin);
-      audit_('Customers', '*', 'Link', 'Finance_ID', '', lids.length + ' customer(s) linked to Finance codes', 'Finance sync');
+      audit_(cfg.entity, '*', 'Link', 'Finance_ID', '', lids.length + ' row(s) linked to Finance codes', 'Finance sync');
     });
   }
-  // 2. changed / new customers, a few per call
+  // 2. changed / new rows, a few per call
   writes.slice(0, cap).forEach(function (w) {
-    entity_save('Customers', w.data);
-    if (w.data.Customer_ID) res.updated++; else res.created++;
+    entity_save(cfg.entity, w.data);
+    if (w.data[idCol]) res.updated++; else res.created++;
   });
   res.more = writes.length > cap;
-  rows.forEach(function (r) { if (!t(r.Finance_ID) && !claimed[r.Customer_ID] && String(r['Active?'] || 'Yes').toLowerCase() !== 'no') res.mastersOnly.push(r.Name); });
-  res.mastersOnly = res.mastersOnly.filter(function (n) { return !(list || []).some(function (f) { return key(f && f.name) === key(n); }); });
+  if (cfg.mastersOnly) {
+    rows.forEach(function (r) { if (!t(r.Finance_ID) && !claimed[r[idCol]] && String(r['Active?'] || 'Yes').toLowerCase() !== 'no') res.mastersOnly.push(r.Name); });
+    res.mastersOnly = res.mastersOnly.filter(function (n) { return !(list || []).some(function (f) { return key(f && f.name) === key(n); }); });
+  }
   return res;
+}
+function syncCustomersFromFinance(list, max) { return syncFromFinance_({ entity: 'Customers', rec: 'Rec_Customers', addr: 'Billing_Address', extra: {}, mastersOnly: true }, list, max); }
+/** Finance vendors -> Masters Parties (new ones are suppliers). Same rules as customers; a vendor only in Masters is normal (IMS suppliers, job workers). */
+function syncVendorsFromFinance(list, max) { return syncFromFinance_({ entity: 'Parties', rec: 'Rec_Parties', addr: 'Address', extra: { 'Is_Supplier?': 'Yes' }, mastersOnly: false }, list, max); }
+
+/**
+ * IMS SUPPLIERS / JOB WORKERS: Masters is the master. IMS sends the codes it already uses once, so every Masters party knows its IMS code
+ * (stored in IMS_Supplier_Code / IMS_JW_Code) and IMS's old SUPP-xxxx / JW-xxxx codes stay valid in POs, GRNs and job work challans.
+ *   kind = 'supplier' | 'jobworker';  list = [{ code, name, category?, contact?, phone?, email?, gstin?, address?, active? }]
+ * Each IMS row is matched to a Masters party by (1) the stored code, (2) the approved Rec_Parties row (Source IMS-Supplier / IMS-JobWorker),
+ * (3) the same name (case / punctuation / spaces ignored, only a party without that code yet). A match gets the code stored (and the role
+ * flag set to Yes if missing), and any detail Masters has BLANK (category, contact, phone, email, GSTIN, address) is filled from IMS; a value
+ * Masters already has is never changed. No match -> a new Masters party (at most `max` per call, default 20;
+ * { more:true } = call again). Editors only. -> { total, linked, flagged, created, more }
+ */
+function syncPartiesFromIms(kind, list, max) {
+  requireEditor_();
+  const key = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+  const t = function (v) { return String(v == null ? '' : v).trim(); };
+  const jw = kind === 'jobworker', codeCol = jw ? 'IMS_JW_Code' : 'IMS_Supplier_Code', flag = jw ? 'Is_JobWorker?' : 'Is_Supplier?', recSrc = jw ? 'IMS-JobWorker' : 'IMS-Supplier';
+  const cap = max > 0 ? max : 20;
+  const sh = sh_('Parties');
+  ensureColumns_(sh, SCHEMA['Parties'].headers);
+  const rows = entity_list('Parties', {});
+  const byCode = {}, byId = {}, byName = {};
+  rows.forEach(function (r) { byId[r.Party_ID] = r; if (t(r[codeCol])) byCode[t(r[codeCol])] = r; });
+  rows.forEach(function (r) { const k = key(r.Name); if (k && !t(r[codeCol]) && !byName[k]) byName[k] = r; });
+  const rec = {};
+  try {
+    const rs = ss_().getSheetByName('Rec_Parties');
+    if (rs && rs.getLastRow() >= 2) {
+      const h = rs.getRange(1, 1, 1, rs.getLastColumn()).getValues()[0], iS = h.indexOf('Source'), iI = h.indexOf('Source_ID'), iT = h.indexOf('Target_Master_ID');
+      if (iS >= 0 && iI >= 0 && iT >= 0) rs.getRange(2, 1, rs.getLastRow() - 1, h.length).getValues().forEach(function (r) {
+        if (t(r[iS]) === recSrc && t(r[iI]) && t(r[iT])) rec[t(r[iI])] = t(r[iT]);
+      });
+    }
+  } catch (e) {}
+  const res = { total: 0, linked: 0, flagged: 0, created: 0, more: false };
+  const link = {}, setFlag = {}, fill = {}, creates = [], claimed = {};
+  (list || []).forEach(function (f) {
+    const code = t(f && f.code), name = t(f && f.name).replace(/\s+/g, ' ');
+    if (!code || !name) return;
+    res.total++;
+    let m = byCode[code];
+    if (!m && rec[code]) { const c = byId[rec[code]]; if (c && (!t(c[codeCol]) || t(c[codeCol]) === code) && !claimed[c.Party_ID]) m = c; }
+    if (!m) { const c = byName[key(name)]; if (c && !t(c[codeCol]) && !claimed[c.Party_ID]) m = c; }
+    if (!m) {
+      const nd = { Name: name, Category: t(f.category), Contact_Person: t(f.contact), Phone: t(f.phone), Email: t(f.email), GSTIN: t(f.gstin), Address: t(f.address), 'Active?': f.active === false ? 'No' : 'Yes' };
+      nd[flag] = 'Yes'; nd[codeCol] = code;
+      creates.push(nd); return;
+    }
+    claimed[m.Party_ID] = true;
+    if (t(m[codeCol]) !== code) { link[m.Party_ID] = code; res.linked++; }
+    if (String(m[flag]).toLowerCase() !== 'yes') { setFlag[m.Party_ID] = true; res.flagged++; }
+    // details Masters lacks are taken from IMS (blank fields only; a value already in Masters is never changed)
+    [['Category', f.category], ['Contact_Person', f.contact], ['Phone', f.phone], ['Email', f.email], ['GSTIN', f.gstin], ['Address', f.address]].forEach(function (p) {
+      if (t(p[1]) && !t(m[p[0]])) { (fill[m.Party_ID] = fill[m.Party_ID] || {})[p[0]] = t(p[1]); }
+    });
+  });
+  const patch = {};   // Party_ID -> { column: value }
+  Object.keys(link).forEach(function (i) { (patch[i] = patch[i] || {})[codeCol] = link[i]; });
+  Object.keys(setFlag).forEach(function (i) { (patch[i] = patch[i] || {})[flag] = 'Yes'; });
+  Object.keys(fill).forEach(function (i) { patch[i] = Object.assign(patch[i] || {}, fill[i]); });
+  const pids = Object.keys(patch);
+  if (pids.length) {
+    withLock_(function () {
+      const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0], n = sh.getLastRow() - 1;
+      const idv = sh.getRange(2, hdr.indexOf('Party_ID') + 1, n, 1).getValues();
+      const cols = {}; pids.forEach(function (i) { Object.keys(patch[i]).forEach(function (c) { cols[c] = true; }); });
+      Object.keys(cols).forEach(function (c) {   // one read + one write per touched column
+        const ci = hdr.indexOf(c) + 1, vals = sh.getRange(2, ci, n, 1).getValues();
+        for (let i = 0; i < n; i++) { const pp = patch[idv[i][0]]; if (pp && pp[c] !== undefined) vals[i][0] = pp[c]; }
+        sh.getRange(2, ci, n, 1).setValues(vals);
+      });
+      audit_('Parties', '*', 'Link', codeCol, '', Object.keys(link).length + ' party(ies) linked to IMS codes, ' + Object.keys(setFlag).length + ' role flag(s) set, ' + Object.keys(fill).length + ' filled from IMS', 'IMS sync');
+    });
+  }
+  creates.slice(0, cap).forEach(function (d) { entity_save('Parties', d); res.created++; });
+  res.more = creates.length > cap;
+  return res;
+}
+
+/**
+ * Add a supplier / job worker from IMS (or anywhere). data = { Name, role:'supplier'|'jobworker', code? (IMS code), Category?, Contact_Person?, Phone?, Email?, GSTIN?, Address? }.
+ * The same name already in Masters is never added twice: it either already has the role -> { ok:false, duplicate:{id,name} }, or it is given the role (and the
+ * IMS code) -> { ok:true, id, name, existing:true }. Otherwise a new party is created. Editors only.
+ */
+function addPartyChecked(data) {
+  requireEditor_();
+  const t = function (k) { return String((data && data[k]) || '').trim(); };
+  const name = t('Name').replace(/\s+/g, ' ');
+  if (!name) throw new Error('Name is required.');
+  if (name.length > 120) throw new Error('Name is too long (max 120 characters).');
+  const k = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+  if (!k(name)) throw new Error('Name must contain letters or numbers.');
+  const jw = data && data.role === 'jobworker', flag = jw ? 'Is_JobWorker?' : 'Is_Supplier?', codeCol = jw ? 'IMS_JW_Code' : 'IMS_Supplier_Code';
+  const same = entity_list('Parties', {}).filter(function (r) { return k(r.Name) === k(name); })[0];
+  if (same) {
+    if (String(same[flag]).toLowerCase() === 'yes') return { ok: false, duplicate: { id: same.Party_ID, name: same.Name } };
+    const u = { Party_ID: same.Party_ID }; u[flag] = 'Yes'; if (t('code') && !String(same[codeCol] || '').trim()) u[codeCol] = t('code');
+    entity_save('Parties', u);
+    return { ok: true, id: same.Party_ID, name: same.Name, existing: true };
+  }
+  const row = { Name: name, Category: t('Category'), Contact_Person: t('Contact_Person'), Phone: t('Phone'), Email: t('Email'), GSTIN: t('GSTIN'), Address: t('Address'), 'Active?': 'Yes' };
+  row[flag] = 'Yes'; if (t('code')) row[codeCol] = t('code');
+  const saved = entity_save('Parties', row);
+  return { ok: true, id: saved.Party_ID, name: saved.Name };
 }
 
 // -----------------------------------------------------------------------------
