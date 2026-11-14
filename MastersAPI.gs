@@ -52,6 +52,38 @@ function createEmployee(data)       { return entity_save('Employees', data); }
 function updateEmployee(id, data)   { return entity_save('Employees', Object.assign({}, data, { 'Emp_ID': id })); }
 function deleteEmployee(id)         { return entity_softDelete('Employees', id); }
 
+/**
+ * Safe "add employee" for the Add-employee buttons in PM / IMS / Finance. Editors only (like every Masters write).
+ * data: { Name, Role?, Phone?, confirmSimilar? }
+ *   exact same name already there (case / punctuation / spaces ignored) → { ok:false, duplicate:{id,name,status} }, nothing created
+ *   a similar name (all words of one are inside the other: "Arjun" / "Arjun Singh") → { ok:false, similar:[{id,name,status}] }
+ *     unless confirmSimilar === true (the person looked and wants a new one anyway)
+ *   otherwise creates an Active employee → { ok:true, id, name }
+ */
+function addEmployeeChecked(data) {
+  requireEditor_();
+  const name = String((data && data.Name) || '').replace(/\s+/g, ' ').trim();
+  if (!name) throw new Error('Name is required.');
+  if (name.length > 80) throw new Error('Name is too long (max 80 characters).');
+  const words = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(String); };
+  const mine = words(name), key = mine.join(' ');
+  if (!key) throw new Error('Name must contain letters or numbers.');
+  const similar = [];
+  for (const e of entity_list('Employees', {})) {
+    const theirs = words(e.Name), tk = theirs.join(' ');
+    if (!tk) continue;
+    const info = { id: e.Emp_ID, name: e.Name, status: e.Status };
+    if (tk === key) return { ok: false, duplicate: info };
+    const short = mine.length <= theirs.length ? mine : theirs, long = mine.length <= theirs.length ? theirs : mine;
+    if (short.every(function (w) { return long.indexOf(w) >= 0; })) similar.push(info);
+  }
+  if (similar.length && !(data && data.confirmSimilar === true)) return { ok: false, similar: similar.slice(0, 5) };
+  const saved = entity_save('Employees', {
+    Name: name, Role: String((data && data.Role) || '').trim(), Phone: String((data && data.Phone) || '').trim(), Status: 'Active'
+  });
+  return { ok: true, id: saved.Emp_ID, name: saved.Name };
+}
+
 // -----------------------------------------------------------------------------
 // Sites
 // -----------------------------------------------------------------------------
