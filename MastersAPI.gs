@@ -52,6 +52,31 @@ function createEmployee(data)       { return entity_save('Employees', data); }
 function updateEmployee(id, data)   { return entity_save('Employees', Object.assign({}, data, { 'Emp_ID': id })); }
 function deleteEmployee(id)         { return entity_softDelete('Employees', id); }
 
+/**
+ * Fill ONLY the blank fields of existing employees (matched by name; case / punctuation / spaces ignored). Used to move details that
+ * were typed in PM or Finance into Masters once. A value that is already in Masters is NEVER overwritten. Editors only.
+ * updates: [{ Name, Role?, Department?, Phone?, Email?, Gross_Monthly_Salary?, Daily_Rate? }]  →  { filled: n, notFound: [names] }
+ */
+function fillEmployeeBlanks(updates) {
+  requireEditor_();
+  const norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+  const byKey = {};
+  entity_list('Employees', {}).forEach(function (e) { const k = norm(e.Name); if (k && !byKey[k]) byKey[k] = e; });
+  let filled = 0; const notFound = [];
+  (updates || []).forEach(function (u) {
+    const e = byKey[norm(u && u.Name)];
+    if (!e) { notFound.push(u && u.Name); return; }
+    const data = { Emp_ID: e.Emp_ID }; let any = false;
+    ['Role', 'Department', 'Phone', 'Email', 'Gross_Monthly_Salary', 'Daily_Rate'].forEach(function (f) {
+      if (u[f] === undefined || u[f] === null || String(u[f]).trim() === '') return;
+      if (String(e[f] === undefined || e[f] === null ? '' : e[f]).trim() !== '') return;   // Masters already has it
+      data[f] = u[f]; any = true;
+    });
+    if (any) { entity_save('Employees', data); filled++; }
+  });
+  return { filled: filled, notFound: notFound };
+}
+
 /** Put the live Employees sheet in the schema's column order (by header name, data follows, hidden backup first). Idempotent. Editors only. */
 function ensureEmployeeLayout() {
   requireEditor_();

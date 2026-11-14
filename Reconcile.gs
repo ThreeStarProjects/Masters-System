@@ -183,16 +183,18 @@ function reconcile_pullEmployees() {
   const fin = _openSrcSS_('finance_sheet_id', 'Finance');
 
   // Finance.M_Employee — Name | Email | Phone | Designation | Gross_Monthly_Salary | Active | Daily_Rate | Holds_Float
-  _readSheet_(fin, 'M_Employee').forEach(function (r) {
-    const name = String(r['Name'] || '').trim();
-    if (!name) return;
-    rows.push({
-      source: 'Finance',
-      sourceId: '',   // Finance employees have no stable ID
-      sourceName: name,
-      payload: r
+  try {   // the sheet no longer exists once Finance has been moved to read the employees from Masters
+    _readSheet_(fin, 'M_Employee').forEach(function (r) {
+      const name = String(r['Name'] || '').trim();
+      if (!name) return;
+      rows.push({
+        source: 'Finance',
+        sourceId: '',   // Finance employees have no stable ID
+        sourceName: name,
+        payload: r
+      });
     });
-  });
+  } catch (e) { Logger.log('Finance M_Employee pull skipped: ' + e.message); }
 
   // PM.People — depends on columns, pull generically
   try {
