@@ -27,6 +27,82 @@ function createCustomer(data)       { return entity_save('Customers', data); }
 function updateCustomer(id, data)   { return entity_save('Customers', Object.assign({}, data, { 'Customer_ID': id })); }
 function deleteCustomer(id)         { return entity_softDelete('Customers', id); }
 
+/**
+ * FINANCE IS THE MASTER FOR CUSTOMERS; Masters holds a copy for IMS / PM. Finance calls this with every customer it has:
+ *   list = [{ financeId:'CUST-0015', name, gstin?, email?, phone?, address?, active? (false = inactive) }]
+ * Each Finance customer is matched to a Masters customer by (1) Finance_ID, (2) the approved Rec_Customers row (Source_ID -> Target_Master_ID),
+ * (3) the same name (case / punctuation / spaces ignored, only if that Masters customer is not yet linked). A match gets the Finance_ID
+ * stored (bulk, no audit spam) and any CHANGED Finance value copied over (name, GSTIN, email, phone, billing address, active); a blank
+ * Finance value never blanks Masters. No match -> a new Masters customer. Customers only in Masters are left alone and listed.
+ * Writes are capped at `max` (default 20) per call; { more:true } = call again. Editors only.
+ * -> { total, linked, created, updated, unchanged, more, mastersOnly:[names] }
+ */
+function syncCustomersFromFinance(list, max) {
+  requireEditor_();
+  const key = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+  const t = function (v) { return String(v == null ? '' : v).trim(); };
+  const cap = max > 0 ? max : 20;
+  const sh = sh_('Customers');
+  ensureColumns_(sh, SCHEMA['Customers'].headers);
+  const rows = entity_list('Customers', {});
+  const byFin = {}, byId = {}, byName = {};
+  rows.forEach(function (r) {
+    byId[r.Customer_ID] = r;
+    if (t(r.Finance_ID)) byFin[t(r.Finance_ID)] = r;
+  });
+  rows.forEach(function (r) { const k = key(r.Name); if (k && !t(r.Finance_ID) && !byName[k]) byName[k] = r; });
+  const rec = {};
+  try {
+    const rs = ss_().getSheetByName('Rec_Customers');
+    if (rs && rs.getLastRow() >= 2) {
+      const h = rs.getRange(1, 1, 1, rs.getLastColumn()).getValues()[0], iS = h.indexOf('Source'), iI = h.indexOf('Source_ID'), iT = h.indexOf('Target_Master_ID');
+      if (iS >= 0 && iI >= 0 && iT >= 0) rs.getRange(2, 1, rs.getLastRow() - 1, h.length).getValues().forEach(function (r) {
+        if (t(r[iS]) === 'Finance' && t(r[iI]) && t(r[iT])) rec[t(r[iI])] = t(r[iT]);
+      });
+    }
+  } catch (e) {}
+  const res = { total: 0, linked: 0, created: 0, updated: 0, unchanged: 0, more: false, mastersOnly: [] };
+  const link = {}, writes = [], claimed = {};
+  (list || []).forEach(function (f) {
+    const fid = t(f && f.financeId), name = t(f && f.name).replace(/\s+/g, ' ');
+    if (!fid || !name) return;
+    res.total++;
+    let m = byFin[fid];
+    if (!m && rec[fid]) { const c = byId[rec[fid]]; if (c && (!t(c.Finance_ID) || t(c.Finance_ID) === fid) && !claimed[c.Customer_ID]) m = c; }
+    if (!m) { const c = byName[key(name)]; if (c && !t(c.Finance_ID) && !claimed[c.Customer_ID]) m = c; }
+    if (!m) { writes.push({ fid: fid, data: { Name: name, GSTIN: t(f.gstin), Email: t(f.email), Phone: t(f.phone), Billing_Address: t(f.address), 'Active?': f.active === false ? 'No' : 'Yes', Finance_ID: fid } }); return; }
+    claimed[m.Customer_ID] = true;
+    if (t(m.Finance_ID) !== fid) { link[m.Customer_ID] = fid; res.linked++; }
+    const d = { Customer_ID: m.Customer_ID }; let any = false;
+    const set = function (field, val) { if (val !== '' && t(m[field]) !== val) { d[field] = val; any = true; } };
+    set('Name', name); set('GSTIN', t(f.gstin)); set('Email', t(f.email)); set('Phone', t(f.phone)); set('Billing_Address', t(f.address));
+    const act = f.active === false ? 'No' : 'Yes';
+    if (String(m['Active?'] || 'Yes').toLowerCase() !== act.toLowerCase()) { d['Active?'] = act; any = true; }
+    if (any) writes.push({ fid: fid, data: d }); else if (!link[m.Customer_ID]) res.unchanged++;
+  });
+  // 1. Finance_ID links in one bulk write
+  const lids = Object.keys(link);
+  if (lids.length) {
+    withLock_(function () {
+      const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0], cId = hdr.indexOf('Customer_ID'), cF = hdr.indexOf('Finance_ID');
+      const n = sh.getLastRow() - 1;
+      const ids = sh.getRange(2, cId + 1, n, 1).getValues(), fin = sh.getRange(2, cF + 1, n, 1).getValues();
+      for (let i = 0; i < n; i++) if (link[ids[i][0]]) fin[i][0] = link[ids[i][0]];
+      sh.getRange(2, cF + 1, n, 1).setValues(fin);
+      audit_('Customers', '*', 'Link', 'Finance_ID', '', lids.length + ' customer(s) linked to Finance codes', 'Finance sync');
+    });
+  }
+  // 2. changed / new customers, a few per call
+  writes.slice(0, cap).forEach(function (w) {
+    entity_save('Customers', w.data);
+    if (w.data.Customer_ID) res.updated++; else res.created++;
+  });
+  res.more = writes.length > cap;
+  rows.forEach(function (r) { if (!t(r.Finance_ID) && !claimed[r.Customer_ID] && String(r['Active?'] || 'Yes').toLowerCase() !== 'no') res.mastersOnly.push(r.Name); });
+  res.mastersOnly = res.mastersOnly.filter(function (n) { return !(list || []).some(function (f) { return key(f && f.name) === key(n); }); });
+  return res;
+}
+
 // -----------------------------------------------------------------------------
 // Parties (unified Supplier / JobWorker / Transporter / ServiceProv)
 // -----------------------------------------------------------------------------

@@ -96,7 +96,8 @@ const SCHEMA = {
       'Contact_Person', 'Phone', 'Email',
       'Payment_Terms_Days', 'Credit_Limit',
       'Active?',
-      'Created_At', 'Created_By', 'Updated_At', 'Updated_By'
+      'Created_At', 'Created_By', 'Updated_At', 'Updated_By',
+      'Finance_ID'
     ],
     idCol: 'Customer_ID',
     idPrefix: 'CUST',
@@ -119,7 +120,8 @@ const SCHEMA = {
       'Email':               { type: 'text' },
       'Payment_Terms_Days':  { type: 'number' },
       'Credit_Limit':        { type: 'number' },
-      'Active?':             { type: 'yesno',    default: 'Yes' }
+      'Active?':             { type: 'yesno',    default: 'Yes' },
+      'Finance_ID':          { type: 'text',     hint: "Finance's own customer code (CUST-xxxx). Finance is the master for customers; filled by Finance's sync, do not edit" }
     }
   },
 
