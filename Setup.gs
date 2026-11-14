@@ -84,6 +84,7 @@ function applyHeaders_(sheetName) {
   if (!schema) return;
   const sh = sh_(sheetName);
   const headers = schema.headers;
+  ensureColumns_(sh, headers);   // reorders the data by header NAME first, so rewriting the header row below can never mislabel data
   sh.getRange(1, 1, 1, headers.length)
     .setValues([headers])
     .setFontWeight('bold')

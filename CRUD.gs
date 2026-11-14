@@ -280,16 +280,44 @@ function stripInternal_(row) {
 }
 
 /**
- * Make sure the sheet has room and a header for every schema column. ONLY fills header cells that are blank (never
- * overwrites or moves anything), so it is safe on a sheet with data. Used when a column is appended to a schema.
+ * Make the sheet match its schema: room and a header for every schema column, in the schema's ORDER.
+ *  - Headers that are blank are filled (nothing else is overwritten).
+ *  - If the schema columns are present but in a different order (a column was moved in the schema), the sheet is REORDERED BY
+ *    HEADER NAME with all data and number formats following their columns. A hidden backup copy of the sheet is made first.
+ *    A column that is not in the schema is kept, moved to the right of the schema columns. Idempotent: a sheet already in order is untouched.
+ * Safe to call on every save. Never runs on a sheet whose first header is not the schema's first header.
  */
 function ensureColumns_(sh, headers) {
   var n = headers.length;
   if (sh.getMaxColumns() < n) sh.insertColumnsAfter(sh.getMaxColumns(), n - sh.getMaxColumns());
-  var cur = sh.getRange(1, 1, 1, n).getValues()[0];
+  var width = Math.max(n, sh.getLastColumn());
+  var cur = sh.getRange(1, 1, 1, width).getValues()[0].map(function (v) { return String(v).trim(); });
+  var misplaced = cur[0] === headers[0] && headers.some(function (h, i) { return cur[i] !== h && cur.indexOf(h) >= 0; });
+  if (misplaced) reorderToSchema_(sh, headers, cur, width);
+  cur = sh.getRange(1, 1, 1, n).getValues()[0];
   for (var i = 0; i < n; i++) {
     if (String(cur[i]).trim() === "") {
       sh.getRange(1, i + 1).setValue(headers[i]).setFontWeight("bold").setBackground("#1f3a5f").setFontColor("#ffffff");
     }
   }
+}
+
+function reorderToSchema_(sh, headers, cur, width) {
+  var last = sh.getLastRow();
+  // 1. hidden backup first. If it cannot be made, nothing is moved.
+  var bak = sh.copyTo(sh.getParent());
+  bak.setName('_bak_' + sh.getName() + '_' + Utilities.formatDate(new Date(), 'GMT+5:30', 'yyyyMMdd_HHmm'));
+  bak.hideSheet();
+  // 2. new column order: schema columns in schema order (by name; -1 = not in the sheet yet), then any other named column
+  var order = headers.map(function (h) { return cur.indexOf(h); });
+  cur.forEach(function (h, i) { if (h !== '' && headers.indexOf(h) < 0) order.push(i); });
+  var data = sh.getRange(1, 1, last, width).getValues();
+  var fmts = sh.getRange(1, 1, last, width).getNumberFormats();
+  var outV = data.map(function (row, r) {
+    return order.map(function (i, k) { return r === 0 ? (k < headers.length ? headers[k] : cur[i]) : (i < 0 ? '' : row[i]); });
+  });
+  var outF = fmts.map(function (row) { return order.map(function (i) { return i < 0 ? 'General' : row[i]; }); });
+  sh.getRange(1, 1, last, order.length).setValues(outV).setNumberFormats(outF);
+  if (width > order.length) sh.getRange(1, order.length + 1, last, width - order.length).clearContent();
+  sh.getRange(1, 1, 1, order.length).setFontWeight('bold').setBackground('#1f3a5f').setFontColor('#ffffff');
 }

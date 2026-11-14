@@ -170,9 +170,8 @@ const SCHEMA = {
       'Phone',
       'Status', 'Left_Date',
       'Notes',
-      'Created_At', 'Created_By', 'Updated_At', 'Updated_By',
-      // Added later, appended at the END so the existing columns and data keep their place. Role = designation.
-      'Department', 'Email', 'Gross_Monthly_Salary'
+      'Department', 'Email', 'Gross_Monthly_Salary',      // Role = designation. (Added later; the live sheet is reordered by name, see ensureColumns_)
+      'Created_At', 'Created_By', 'Updated_At', 'Updated_By'
     ],
     idCol: 'Emp_ID',
     idPrefix: 'EMP',

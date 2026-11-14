@@ -52,6 +52,13 @@ function createEmployee(data)       { return entity_save('Employees', data); }
 function updateEmployee(id, data)   { return entity_save('Employees', Object.assign({}, data, { 'Emp_ID': id })); }
 function deleteEmployee(id)         { return entity_softDelete('Employees', id); }
 
+/** Put the live Employees sheet in the schema's column order (by header name, data follows, hidden backup first). Idempotent. Editors only. */
+function ensureEmployeeLayout() {
+  requireEditor_();
+  ensureColumns_(sh_('Employees'), SCHEMA['Employees'].headers);
+  return true;
+}
+
 /**
  * Safe "add employee" for the Add-employee buttons in PM / IMS / Finance. Editors only (like every Masters write).
  * data: { Name, Role? (= designation), Phone?, Department?, Email?, Gross_Monthly_Salary?, Daily_Rate?, 'Holds_Float?'?, confirmSimilar? }
