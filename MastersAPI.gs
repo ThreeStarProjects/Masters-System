@@ -54,7 +54,7 @@ function deleteEmployee(id)         { return entity_softDelete('Employees', id);
 
 /**
  * Safe "add employee" for the Add-employee buttons in PM / IMS / Finance. Editors only (like every Masters write).
- * data: { Name, Role?, Phone?, confirmSimilar? }
+ * data: { Name, Role? (= designation), Phone?, Department?, Email?, Gross_Monthly_Salary?, Daily_Rate?, 'Holds_Float?'?, confirmSimilar? }
  *   exact same name already there (case / punctuation / spaces ignored) → { ok:false, duplicate:{id,name,status} }, nothing created
  *   a similar name (all words of one are inside the other: "Arjun" / "Arjun Singh") → { ok:false, similar:[{id,name,status}] }
  *     unless confirmSimilar === true (the person looked and wants a new one anyway)
@@ -78,9 +78,15 @@ function addEmployeeChecked(data) {
     if (short.every(function (w) { return long.indexOf(w) >= 0; })) similar.push(info);
   }
   if (similar.length && !(data && data.confirmSimilar === true)) return { ok: false, similar: similar.slice(0, 5) };
-  const saved = entity_save('Employees', {
-    Name: name, Role: String((data && data.Role) || '').trim(), Phone: String((data && data.Phone) || '').trim(), Status: 'Active'
-  });
+  const t = function (k) { return String((data && data[k]) || '').trim(); };
+  const num = function (k) { const v = data && data[k]; return v === undefined || v === null || v === '' ? '' : Number(v); };
+  const row = { Name: name, Role: t('Role'), Phone: t('Phone'), Department: t('Department'), Email: t('Email'), Status: 'Active' };
+  const gross = num('Gross_Monthly_Salary'), daily = num('Daily_Rate');
+  if ((gross !== '' && !(gross >= 0)) || (daily !== '' && !(daily >= 0))) throw new Error('Salary and daily rate must be numbers, 0 or more.');
+  if (gross !== '') row.Gross_Monthly_Salary = gross;
+  if (daily !== '') row.Daily_Rate = daily;
+  if (data && data['Holds_Float?'] === 'Yes') row['Holds_Float?'] = 'Yes';
+  const saved = entity_save('Employees', row);
   return { ok: true, id: saved.Emp_ID, name: saved.Name };
 }
 

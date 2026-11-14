@@ -170,7 +170,9 @@ const SCHEMA = {
       'Phone',
       'Status', 'Left_Date',
       'Notes',
-      'Created_At', 'Created_By', 'Updated_At', 'Updated_By'
+      'Created_At', 'Created_By', 'Updated_At', 'Updated_By',
+      // Added later, appended at the END so the existing columns and data keep their place. Role = designation.
+      'Department', 'Email', 'Gross_Monthly_Salary'
     ],
     idCol: 'Emp_ID',
     idPrefix: 'EMP',
@@ -191,7 +193,10 @@ const SCHEMA = {
       'Phone':          { type: 'text' },
       'Status':         { type: 'enum',     values: ['Active', 'Left'], default: 'Active' },
       'Left_Date':      { type: 'date',     hint: 'only if Status=Left' },
-      'Notes':          { type: 'textarea' }
+      'Notes':          { type: 'textarea' },
+      'Department':     { type: 'text',     hint: 'e.g. Production, Site, Accounts' },
+      'Email':          { type: 'text' },
+      'Gross_Monthly_Salary': { type: 'number', hint: 'monthly staff. Pay terms are normally edited in Finance (Masters tab)' }
     }
   },
 

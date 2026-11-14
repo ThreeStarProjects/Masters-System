@@ -335,6 +335,9 @@ function _buildMasterPayload_(entity, sourceName, payload) {
       Phone: payload['Phone'] || '',
       Role: payload['Designation'] || payload['Role'] || '',
       Daily_Rate: payload['Daily_Rate'] || '',
+      Department: payload['Department'] || '',
+      Email: payload['Email'] || '',
+      Gross_Monthly_Salary: payload['Gross_Monthly_Salary'] || payload['Gross'] || '',
       'Holds_Float?': String(payload['Holds_Float'] || 'No').toLowerCase() === 'yes' ? 'Yes' : 'No',
       Status: String(payload['Active'] || 'Yes').toLowerCase() === 'no' ? 'Left' : 'Active'
     };

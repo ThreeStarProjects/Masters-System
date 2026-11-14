@@ -77,6 +77,7 @@ function entity_save(entityName, row) {
   return withLock_(function () {
     const sh = sh_(entityName);
     const headers = schema.headers;
+    ensureColumns_(sh, headers);   // a column added to the schema later appears in the live sheet by itself
     const idx = {};
     headers.forEach(function (h, i) { idx[h] = i; });
 
@@ -276,4 +277,19 @@ function stripInternal_(row) {
   const o = Object.assign({}, row);
   delete o._row;
   return o;
+}
+
+/**
+ * Make sure the sheet has room and a header for every schema column. ONLY fills header cells that are blank (never
+ * overwrites or moves anything), so it is safe on a sheet with data. Used when a column is appended to a schema.
+ */
+function ensureColumns_(sh, headers) {
+  var n = headers.length;
+  if (sh.getMaxColumns() < n) sh.insertColumnsAfter(sh.getMaxColumns(), n - sh.getMaxColumns());
+  var cur = sh.getRange(1, 1, 1, n).getValues()[0];
+  for (var i = 0; i < n; i++) {
+    if (String(cur[i]).trim() === "") {
+      sh.getRange(1, i + 1).setValue(headers[i]).setFontWeight("bold").setBackground("#1f3a5f").setFontColor("#ffffff");
+    }
+  }
 }
