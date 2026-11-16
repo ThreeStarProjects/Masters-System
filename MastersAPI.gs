@@ -108,8 +108,43 @@ function syncFromFinance_(cfg, list, max) {
   return res;
 }
 function syncCustomersFromFinance(list, max) { return syncFromFinance_({ entity: 'Customers', rec: 'Rec_Customers', addr: 'Billing_Address', extra: {}, mastersOnly: true }, list, max); }
-/** Finance vendors -> Masters Parties (new ones are suppliers). Same rules as customers; a vendor only in Masters is normal (IMS suppliers, job workers). */
-function syncVendorsFromFinance(list, max) { return syncFromFinance_({ entity: 'Parties', rec: 'Rec_Parties', addr: 'Address', extra: { 'Is_Supplier?': 'Yes' }, mastersOnly: false }, list, max); }
+/**
+ * Finance keeps its OWN vendor list; IMS and PM share Masters' supplier list. Parties that only came from Finance (the approved Rec_Parties
+ * rows whose source is Finance, or a Finance_ID) and that no IMS row backs (no IMS code, no IMS row in Rec_Parties) are taken OFF the supplier
+ * list (Is_Supplier? = No). Nothing is deleted; set Is_Supplier? back to Yes in Masters to undo one. apply=false only counts.
+ * Editors only. -> { count, names:[...], applied }
+ */
+function retireFinanceVendors(apply) {
+  requireEditor_();
+  const t = function (v) { return String(v == null ? '' : v).trim(); };
+  const fin = {}, ims = {};
+  try {
+    const rs = ss_().getSheetByName('Rec_Parties');
+    if (rs && rs.getLastRow() >= 2) {
+      const h = rs.getRange(1, 1, 1, rs.getLastColumn()).getValues()[0], iS = h.indexOf('Source'), iT = h.indexOf('Target_Master_ID');
+      if (iS >= 0 && iT >= 0) rs.getRange(2, 1, rs.getLastRow() - 1, h.length).getValues().forEach(function (r) {
+        if (!t(r[iT])) return;
+        if (t(r[iS]) === 'Finance') fin[t(r[iT])] = true; else ims[t(r[iT])] = true;
+      });
+    }
+  } catch (e) {}
+  const hit = entity_list('Parties', {}).filter(function (p) {
+    return String(p['Is_Supplier?']).toLowerCase() === 'yes' && !t(p.IMS_Supplier_Code) && !t(p.IMS_JW_Code) && !ims[p.Party_ID] && (fin[p.Party_ID] || t(p.Finance_ID));
+  });
+  const res = { count: hit.length, names: hit.map(function (p) { return p.Name; }), applied: false };
+  if (apply && hit.length) {
+    const sh = sh_('Parties'), set = {}; hit.forEach(function (p) { set[p.Party_ID] = true; });
+    withLock_(function () {
+      const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0], n = sh.getLastRow() - 1, cF = hdr.indexOf('Is_Supplier?') + 1;
+      const idv = sh.getRange(2, hdr.indexOf('Party_ID') + 1, n, 1).getValues(), fv = sh.getRange(2, cF, n, 1).getValues();
+      for (let i = 0; i < n; i++) if (set[idv[i][0]]) fv[i][0] = 'No';
+      sh.getRange(2, cF, n, 1).setValues(fv);
+      audit_('Parties', '*', 'Update', 'Is_Supplier?', 'Yes', 'No', hit.length + ' Finance-only vendor(s) taken off the supplier list');
+    });
+    res.applied = true;
+  }
+  return res;
+}
 
 /**
  * IMS SUPPLIERS / JOB WORKERS: Masters is the master. IMS sends the codes it already uses once, so every Masters party knows its IMS code
