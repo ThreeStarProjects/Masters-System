@@ -147,7 +147,7 @@ function retireFinanceVendors(apply) {
 }
 
 /**
- * IMS SUPPLIERS / JOB WORKERS: Masters is the master. IMS sends the codes it already uses once, so every Masters party knows its IMS code
+ * IMS SUPPLIERS / JOB WORKERS: IMS is the MASTER, Masters keeps a copy (PM's vendor list reads it). IMS sends the codes it already uses once, so every Masters party knows its IMS code
  * (stored in IMS_Supplier_Code / IMS_JW_Code) and IMS's old SUPP-xxxx / JW-xxxx codes stay valid in POs, GRNs and job work challans.
  *   kind = 'supplier' | 'jobworker';  list = [{ code, name, category?, contact?, phone?, email?, gstin?, address?, active? }]
  * Each IMS row is matched to a Masters party by (1) the stored code, (2) the approved Rec_Parties row (Source IMS-Supplier / IMS-JobWorker),
@@ -156,8 +156,9 @@ function retireFinanceVendors(apply) {
  * Masters already has is never changed. No match -> a new Masters party (at most `max` per call, default 20;
  * { more:true } = call again). Editors only. -> { total, linked, flagged, created, more }
  */
-function syncPartiesFromIms(kind, list, max) {
+function syncPartiesFromIms(kind, list, max, opts) {
   requireEditor_();
+  const over = !!(opts && opts.overwrite);   // IMS is the master: its values replace Masters' (a blank IMS value never blanks Masters)
   const key = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
   const t = function (v) { return String(v == null ? '' : v).trim(); };
   const jw = kind === 'jobworker', codeCol = jw ? 'IMS_JW_Code' : 'IMS_Supplier_Code', flag = jw ? 'Is_JobWorker?' : 'Is_Supplier?', recSrc = jw ? 'IMS-JobWorker' : 'IMS-Supplier';
@@ -178,12 +179,13 @@ function syncPartiesFromIms(kind, list, max) {
       });
     }
   } catch (e) {}
-  const res = { total: 0, linked: 0, flagged: 0, created: 0, more: false };
+  const res = { total: 0, linked: 0, flagged: 0, created: 0, updated: 0, deactivated: 0, more: false };
+  const inList = {};
   const link = {}, setFlag = {}, fill = {}, creates = [], claimed = {};
   (list || []).forEach(function (f) {
     const code = t(f && f.code), name = t(f && f.name).replace(/\s+/g, ' ');
     if (!code || !name) return;
-    res.total++;
+    res.total++; inList[code] = true;
     let m = byCode[code];
     if (!m && rec[code]) { const c = byId[rec[code]]; if (c && (!t(c[codeCol]) || t(c[codeCol]) === code) && !claimed[c.Party_ID]) m = c; }
     if (!m) { const c = byName[key(name)]; if (c && !t(c[codeCol]) && !claimed[c.Party_ID]) m = c; }
@@ -197,9 +199,19 @@ function syncPartiesFromIms(kind, list, max) {
     if (String(m[flag]).toLowerCase() !== 'yes') { setFlag[m.Party_ID] = true; res.flagged++; }
     // details Masters lacks are taken from IMS (blank fields only; a value already in Masters is never changed)
     [['Category', f.category], ['Contact_Person', f.contact], ['Phone', f.phone], ['Email', f.email], ['GSTIN', f.gstin], ['Address', f.address]].forEach(function (p) {
-      if (t(p[1]) && !t(m[p[0]])) { (fill[m.Party_ID] = fill[m.Party_ID] || {})[p[0]] = t(p[1]); }
+      if (t(p[1]) && (over ? t(m[p[0]]) !== t(p[1]) : !t(m[p[0]]))) { (fill[m.Party_ID] = fill[m.Party_ID] || {})[p[0]] = t(p[1]); }
     });
+    if (over) {
+      if (t(m.Name) !== name) (fill[m.Party_ID] = fill[m.Party_ID] || {}).Name = name;
+      const act = f.active === false ? 'No' : 'Yes';
+      if (String(m['Active?'] || 'Yes').toLowerCase() !== act.toLowerCase()) (fill[m.Party_ID] = fill[m.Party_ID] || {})['Active?'] = act;
+    }
   });
+  if (over) rows.forEach(function (r) {   // a code IMS no longer lists (row deleted there) -> inactive here, never deleted
+    const c = t(r[codeCol]);
+    if (c && !inList[c] && String(r['Active?'] || 'Yes').toLowerCase() !== 'no') { (fill[r.Party_ID] = fill[r.Party_ID] || {})['Active?'] = 'No'; res.deactivated++; }
+  });
+  res.updated = Object.keys(fill).length - res.deactivated;
   const patch = {};   // Party_ID -> { column: value }
   Object.keys(link).forEach(function (i) { (patch[i] = patch[i] || {})[codeCol] = link[i]; });
   Object.keys(setFlag).forEach(function (i) { (patch[i] = patch[i] || {})[flag] = 'Yes'; });
@@ -221,33 +233,6 @@ function syncPartiesFromIms(kind, list, max) {
   creates.slice(0, cap).forEach(function (d) { entity_save('Parties', d); res.created++; });
   res.more = creates.length > cap;
   return res;
-}
-
-/**
- * Add a supplier / job worker from IMS (or anywhere). data = { Name, role:'supplier'|'jobworker', code? (IMS code), Category?, Contact_Person?, Phone?, Email?, GSTIN?, Address? }.
- * The same name already in Masters is never added twice: it either already has the role -> { ok:false, duplicate:{id,name} }, or it is given the role (and the
- * IMS code) -> { ok:true, id, name, existing:true }. Otherwise a new party is created. Editors only.
- */
-function addPartyChecked(data) {
-  requireEditor_();
-  const t = function (k) { return String((data && data[k]) || '').trim(); };
-  const name = t('Name').replace(/\s+/g, ' ');
-  if (!name) throw new Error('Name is required.');
-  if (name.length > 120) throw new Error('Name is too long (max 120 characters).');
-  const k = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
-  if (!k(name)) throw new Error('Name must contain letters or numbers.');
-  const jw = data && data.role === 'jobworker', flag = jw ? 'Is_JobWorker?' : 'Is_Supplier?', codeCol = jw ? 'IMS_JW_Code' : 'IMS_Supplier_Code';
-  const same = entity_list('Parties', {}).filter(function (r) { return k(r.Name) === k(name); })[0];
-  if (same) {
-    if (String(same[flag]).toLowerCase() === 'yes') return { ok: false, duplicate: { id: same.Party_ID, name: same.Name } };
-    const u = { Party_ID: same.Party_ID }; u[flag] = 'Yes'; if (t('code') && !String(same[codeCol] || '').trim()) u[codeCol] = t('code');
-    entity_save('Parties', u);
-    return { ok: true, id: same.Party_ID, name: same.Name, existing: true };
-  }
-  const row = { Name: name, Category: t('Category'), Contact_Person: t('Contact_Person'), Phone: t('Phone'), Email: t('Email'), GSTIN: t('GSTIN'), Address: t('Address'), 'Active?': 'Yes' };
-  row[flag] = 'Yes'; if (t('code')) row[codeCol] = t('code');
-  const saved = entity_save('Parties', row);
-  return { ok: true, id: saved.Party_ID, name: saved.Name };
 }
 
 // -----------------------------------------------------------------------------
