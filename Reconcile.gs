@@ -697,75 +697,7 @@ function reconcile_linkCustomersToProjects() {
 // -----------------------------------------------------------------------------
 // Reset — Projects only. PM owns project creation from now on.
 // -----------------------------------------------------------------------------
-function reconcile_resetProjectsOnly() {
-  requireAdmin_();
-  const ui = SpreadsheetApp.getUi();
-  const resp = ui.alert(
-    'Reset Projects only?',
-    'This will DELETE all rows from:\n' +
-    '  • Projects\n' +
-    '  • Rec_Projects\n\n' +
-    'And reset next_prj counter to 1.\n\n' +
-    'Customers, Parties, Employees, Sites, Audit_Log, Config kept.\n' +
-    'After this: PM becomes the source of truth for new projects.\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  if (resp !== ui.Button.YES) return;
-
-  const ss = ss_();
-  const sh = ss.getSheetByName('Projects');
-  if (sh && sh.getLastRow() >= 2) {
-    sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).clearContent();
-  }
-  const recSh = ss.getSheetByName('Rec_Projects');
-  if (recSh) ss.deleteSheet(recSh);
-  setConfigValue_internal_('next_prj', '1');
-  ui.alert('Projects reset. PM now owns project creation.');
-}
-
 // -----------------------------------------------------------------------------
 // Reset — wipe Projects/Customers/Parties/Employees + Rec_* + reset counters.
 // Keeps Sites (seeded), Config, Audit_Log headers.
 // -----------------------------------------------------------------------------
-function reconcile_resetMigration() {
-  requireAdmin_();
-  const ui = SpreadsheetApp.getUi();
-  const resp = ui.alert(
-    'Reset migration data?',
-    'This will DELETE all rows from:\n' +
-    '  • Projects / Customers / Parties / Employees\n' +
-    '  • Rec_Projects / Rec_Customers / Rec_Parties / Rec_Employees\n' +
-    '  • Audit_Log\n\n' +
-    'And reset ID counters (next_prj / next_cust / next_vend / next_emp) to 1.\n\n' +
-    'Sites and Config are kept.\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  if (resp !== ui.Button.YES) return;
-
-  const ss = ss_();
-  const entitySheets = ['Projects', 'Customers', 'Parties', 'Employees'];
-  const recSheets    = ['Rec_Projects', 'Rec_Customers', 'Rec_Parties', 'Rec_Employees'];
-  const extras       = ['Audit_Log'];
-
-  function clearData(name) {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const last = sh.getLastRow();
-    if (last >= 2) sh.getRange(2, 1, last - 1, sh.getLastColumn()).clearContent();
-  }
-  entitySheets.forEach(clearData);
-  extras.forEach(clearData);
-  recSheets.forEach(function (name) {
-    const sh = ss.getSheetByName(name);
-    if (sh) ss.deleteSheet(sh);
-  });
-
-  // Reset counters
-  ['next_prj', 'next_cust', 'next_vend', 'next_emp'].forEach(function (k) {
-    setConfigValue_internal_(k, '1');
-  });
-
-  ui.alert('Reset complete. Pull again for a fresh migration.');
-}
